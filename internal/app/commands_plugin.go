@@ -581,6 +581,7 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 		a.postRepositoryInvalidation(path, RepositoryWorktree)
 	}
 	p.Filesystem = fs
+	p.DialRPC = dialPluginRPC(fs.vars)
 	p.System = NewPluginSystemAPI()
 	p.Terminal = NewPluginTerminalAPI(a)
 	if system, ok := p.System.(*PluginSystemAPI); ok {

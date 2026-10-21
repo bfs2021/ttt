@@ -759,6 +759,7 @@ func setupTTTModule(L *lua.LState, p *Plugin) {
 		"ttt.system":      true,
 		"ttt.terminal":    true,
 		"ttt.net":         true,
+		"ttt.rpc":         true,
 		"ttt.events":      true,
 		"ttt.json":        true,
 		"ttt.regex":       true,

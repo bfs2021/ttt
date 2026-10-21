@@ -124,6 +124,7 @@ func TestSandboxRequireRestricted(t *testing.T) {
 	setupFsModule(L, p)
 	setupSystemModule(L, p)
 	setupNetModule(L, p)
+	setupRPCModule(L, p)
 	setupEventsModule(L, p)
 
 	if err := L.DoString(`local ttt = require("ttt")`); err != nil {

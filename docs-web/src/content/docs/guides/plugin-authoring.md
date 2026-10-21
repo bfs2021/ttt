@@ -2490,6 +2490,69 @@ net.post_async("https://api.example.com/data", {
 end)
 ```
 
+## RPC API
+
+The `ttt.rpc` module opens a persistent JSON-RPC 2.0 connection to another process, framed with `Content-Length` headers like the Language Server Protocol. Either side can send requests and notifications, so a companion process can drive the editor through your plugin: open files, read the screen, type, or click. Requires the `network.rpc` permission.
+
+```lua
+local rpc = require("ttt.rpc")
+```
+
+The plugin always dials out; it cannot listen. The process on the other end is usually started by something else, such as an agent, a daemon, or a tool the user runs.
+
+### RPC endpoint scoping
+
+`network.rpc` lists the endpoints the plugin may connect to:
+
+```json
+"network.rpc": ["127.0.0.1:4250", "unix:~/.cache/my-hub.sock"]
+```
+
+An entry is a host or IP with a required port, or `unix:` followed by a socket path that is absolute or starts with `~` or `{config}`. `rpc.connect` must name a listed endpoint. The approval dialog shows each endpoint, because a process there can make the plugin act with every other permission it holds.
+
+### `rpc.connect(endpoint, opts, callback)`
+
+Connects in the background and calls `callback(conn, err)` on the main thread: `conn` on success, or `nil` and an error message.
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `on_request` | function | `(method, params)` for a request from the peer. Its return value is the result; raising an error sends an error reply. Without it, requests get method-not-found. |
+| `on_notification` | function | `(method, params)` for a notification from the peer. |
+| `on_close` | function | `(err)` when the connection ends: `nil` when either side closed it normally, otherwise the error. |
+
+Params and results convert between JSON and Lua values as `ttt.json` does. Callbacks run on the main thread in the order the messages arrived. A message from the peer larger than 32 MiB closes the connection.
+
+### Connection methods
+
+| Method | Description |
+|--------|-------------|
+| `conn:request(method, params, [callback])` | Send a request. `callback(result, err)` receives the result, or `nil` and the peer's error message. |
+| `conn:notify(method, params)` | Send a notification. Returns `true`, or `false` and an error message. |
+| `conn:close()` | Close the connection. Connections also close when the plugin unloads. |
+
+```lua
+local rpc = require("ttt.rpc")
+
+rpc.connect("unix:~/.cache/my-hub.sock", {
+  on_request = function(method, params)
+    if method == "editor/open" then
+      ttt.open_file(params.path, params.line)
+      return { ok = true }
+    end
+    error("unknown method " .. method)
+  end,
+  on_close = function(err)
+    ttt.log("info", "hub disconnected " .. tostring(err))
+  end,
+}, function(conn, err)
+  if not conn then
+    ttt.log("error", "hub unavailable: " .. err)
+    return
+  end
+  conn:notify("hello", { version = ttt.version() })
+end)
+```
+
 ## Events API
 
 The `ttt.events` module lets plugins react to editor lifecycle events.
@@ -2796,6 +2859,7 @@ Permissions are declared in the manifest's `permissions` object. Boolean permiss
 | `system.env`     | boolean  | Read environment variables (`ttt.system.env`).    |
 | `terminal.control` | boolean | Spawn terminal tabs, send text, focus tabs, and close tabs (`ttt.terminal`). Not constrained by `system.exec` or `fs.*`. |
 | `terminal.read`  | boolean  | Read raw PTY output and visible screen text, and list open terminals (`ttt.terminal`). Accesses any tab, including user tabs. |
+| `network.rpc`    | string[] | Open RPC connections to the listed endpoints (`ttt.rpc`). See [RPC endpoint scoping](#rpc-endpoint-scoping). |
 | `network.http`   | boolean \| string[] | Make outbound HTTP requests (`ttt.net`). `true` allows any destination, local services included; an array (`["api.github.com", "127.0.0.1:4250"]`) restricts requests to those hosts or IPs, each with an optional port. See [Network host scoping](#network-host-scoping). |
 | `events.file`    | boolean  | Listen for file events: `file.open`, `file.close`, `file.save`. |
 | `events.editor`  | boolean  | Listen for editor events: `editor.change`, `cursor.change`, `tab.change`. |

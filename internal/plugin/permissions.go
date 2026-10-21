@@ -287,6 +287,80 @@ func (n *NetworkHTTP) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// NetworkRPC is the network.rpc permission: the endpoints a plugin may open
+// RPC connections to. Each is a host or IP with a required port
+// ("127.0.0.1:4250") or "unix:" and a socket path that is absolute or starts
+// with ~ or {config}.
+type NetworkRPC struct {
+	Endpoints []string
+	// All is for plugins loaded with --plugin; a manifest cannot request it.
+	All bool
+}
+
+const UnixEndpointPrefix = "unix:"
+
+func (n NetworkRPC) Enabled() bool { return n.All || len(n.Endpoints) > 0 }
+
+func (n NetworkRPC) Allows(endpoint string) bool {
+	want, err := parseRPCEndpoint(endpoint)
+	if err != nil {
+		return false
+	}
+	if n.All {
+		return true
+	}
+	for _, e := range n.Endpoints {
+		if have, err := parseRPCEndpoint(e); err == nil && have.matches(want) {
+			return true
+		}
+	}
+	return false
+}
+
+type rpcEndpoint struct {
+	socket string
+	host   hostEntry
+}
+
+func (e rpcEndpoint) matches(o rpcEndpoint) bool {
+	if e.socket != "" || o.socket != "" {
+		return e.socket == o.socket
+	}
+	return sameHost(e.host.host, o.host.host) && e.host.port == o.host.port
+}
+
+func parseRPCEndpoint(s string) (rpcEndpoint, error) {
+	if path, ok := strings.CutPrefix(s, UnixEndpointPrefix); ok {
+		if path == FsAnyPath || path == FsWorkspace || !validFsPath(path) {
+			return rpcEndpoint{}, fmt.Errorf(`network.rpc entry %q: a socket path must be absolute or start with ~ or %s`, s, FsConfig)
+		}
+		return rpcEndpoint{socket: path}, nil
+	}
+	h, err := parseHostEntry(s)
+	if err != nil || h.port == "" {
+		return rpcEndpoint{}, fmt.Errorf(`network.rpc entry %q: want a host with a port, like "127.0.0.1:4250", or a socket, like "unix:~/.cache/hub.sock"`, s)
+	}
+	return rpcEndpoint{host: h}, nil
+}
+
+func (n NetworkRPC) MarshalJSON() ([]byte, error) {
+	return json.Marshal(n.Endpoints)
+}
+
+func (n *NetworkRPC) UnmarshalJSON(data []byte) error {
+	var endpoints []string
+	if err := json.Unmarshal(data, &endpoints); err != nil {
+		return fmt.Errorf("network.rpc must be an array of endpoints: %w", err)
+	}
+	for _, e := range endpoints {
+		if _, err := parseRPCEndpoint(e); err != nil {
+			return err
+		}
+	}
+	n.Endpoints = endpoints
+	return nil
+}
+
 // The approval dialog has room for about 24 characters of value.
 const anyDestination = "any host, even local"
 
@@ -310,6 +384,7 @@ type PermissionSet struct {
 	TerminalControl   bool        `json:"terminal.control,omitempty"`
 	TerminalRead      bool        `json:"terminal.read,omitempty"`
 	NetworkHTTP       NetworkHTTP `json:"network.http,omitempty"`
+	NetworkRPC        NetworkRPC  `json:"network.rpc,omitzero"`
 	EventsFile        bool        `json:"events.file,omitempty"`
 	EventsEditor      bool        `json:"events.editor,omitempty"`
 	Settings          bool        `json:"settings,omitempty"`
@@ -400,6 +475,12 @@ func DiffPermissions(granted, requested PermissionSet) PermissionDiff {
 		}
 	}
 
+	for _, e := range requested.NetworkRPC.Endpoints {
+		if !granted.NetworkRPC.Allows(e) {
+			entries = append(entries, PermissionDiffEntry{Name: "network.rpc", Value: e})
+		}
+	}
+
 	return PermissionDiff{Entries: entries}
 }
 
@@ -446,6 +527,8 @@ func (ps PermissionSet) Check(perm string) error {
 		allowed = ps.TerminalRead
 	case "network.http":
 		allowed = ps.NetworkHTTP.Enabled()
+	case "network.rpc":
+		allowed = ps.NetworkRPC.Enabled()
 	case "events.file":
 		allowed = ps.EventsFile
 	case "events.editor":
@@ -492,6 +575,13 @@ func (ps PermissionSet) CheckExec(binary string) error {
 		return nil
 	}
 	return fmt.Errorf("permission denied: system.exec %q", binary)
+}
+
+func (ps PermissionSet) CheckRPCEndpoint(endpoint string) error {
+	if ps.NetworkRPC.Allows(endpoint) {
+		return nil
+	}
+	return fmt.Errorf("permission denied: network.rpc does not list %q", endpoint)
 }
 
 // CheckURL reports whether the plugin may make an HTTP request to u.
@@ -550,6 +640,10 @@ func (ps PermissionSet) DisplayEntries() []PermissionDiffEntry {
 		entries = append(entries, PermissionDiffEntry{Name: "HTTP host", Value: h})
 	}
 
+	for _, e := range ps.NetworkRPC.Endpoints {
+		entries = append(entries, PermissionDiffEntry{Name: "Accept commands from", Value: e})
+	}
+
 	add("Settings", ps.Settings)
 	for _, k := range ps.SettingsKeys {
 		entries = append(entries, PermissionDiffEntry{Name: "Settings key", Value: k})
@@ -581,6 +675,7 @@ func IntersectPermissions(granted, declared PermissionSet) PermissionSet {
 		TerminalControl:   granted.TerminalControl && declared.TerminalControl,
 		TerminalRead:      granted.TerminalRead && declared.TerminalRead,
 		NetworkHTTP:       intersectNetwork(granted.NetworkHTTP, declared.NetworkHTTP),
+		NetworkRPC:        intersectRPC(granted.NetworkRPC, declared.NetworkRPC),
 		EventsFile:        granted.EventsFile && declared.EventsFile,
 		EventsEditor:      granted.EventsEditor && declared.EventsEditor,
 		Settings:          granted.Settings && declared.Settings,
@@ -613,6 +708,16 @@ func intersectFs(granted, declared FsAccess) FsAccess {
 		}
 	}
 	return FsAccess{Paths: paths}
+}
+
+func intersectRPC(granted, declared NetworkRPC) NetworkRPC {
+	var endpoints []string
+	for _, e := range declared.Endpoints {
+		if granted.Allows(e) {
+			endpoints = append(endpoints, e)
+		}
+	}
+	return NetworkRPC{Endpoints: endpoints}
 }
 
 func intersectNetwork(granted, declared NetworkHTTP) NetworkHTTP {

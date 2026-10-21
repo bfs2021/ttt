@@ -1,7 +1,9 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -91,6 +93,7 @@ type Plugin struct {
 	SimulateDrag       func(x1, y1, x2, y2 int)
 	SimulateKeys       func(combo string) error
 	SimulateText       func(text string)
+	DialRPC            func(ctx context.Context, endpoint string) (io.ReadWriteCloser, error)
 	ScreenText         func() string
 	DebugState         func() (string, error)
 	QuitApp            func()
@@ -138,6 +141,7 @@ type Plugin struct {
 
 	timers      map[int]func()
 	nextTimerID int
+	rpcConns    map[*rpcConn]struct{}
 }
 
 type CommandInfo struct {
@@ -172,6 +176,7 @@ func (p *Plugin) Init() error {
 	setupSystemModule(p.State, p)
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
+	setupRPCModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -220,6 +225,7 @@ func (p *Plugin) InitFromSource(source string) error {
 	setupSystemModule(p.State, p)
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
+	setupRPCModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -273,6 +279,7 @@ func (p *Plugin) Destroy() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopTimersLocked()
+	p.closeRPCConnsLocked()
 	if p.State != nil {
 		p.State.Close()
 		p.State = nil
@@ -307,6 +314,7 @@ func (p *Plugin) Destroy() {
 	p.SimulateDrag = nil
 	p.SimulateKeys = nil
 	p.SimulateText = nil
+	p.DialRPC = nil
 	p.ScreenText = nil
 	p.DebugState = nil
 	p.QuitApp = nil

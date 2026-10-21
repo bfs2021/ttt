@@ -2,9 +2,11 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -325,6 +327,20 @@ type PluginFilesystemAPI struct {
 type fsRoots struct {
 	dirs []string
 	all  bool
+}
+
+const pluginRPCDialTimeout = 10 * time.Second
+
+func dialPluginRPC(vars plugin.FsVars) func(context.Context, string) (io.ReadWriteCloser, error) {
+	return func(ctx context.Context, endpoint string) (io.ReadWriteCloser, error) {
+		ctx, cancel := context.WithTimeout(ctx, pluginRPCDialTimeout)
+		defer cancel()
+		var d net.Dialer
+		if path, ok := strings.CutPrefix(endpoint, plugin.UnixEndpointPrefix); ok {
+			return d.DialContext(ctx, "unix", vars.Expand(path))
+		}
+		return d.DialContext(ctx, "tcp", endpoint)
+	}
 }
 
 func NewPluginFilesystemAPI(allowedRoots ...string) *PluginFilesystemAPI {

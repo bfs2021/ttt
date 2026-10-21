@@ -1,0 +1,339 @@
+package plugin
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"sync"
+
+	"github.com/eugenioenko/ttt/internal/jsonrpc"
+	lua "github.com/yuin/gopher-lua"
+)
+
+const rpcConnTypeName = "ttt.rpc.conn"
+
+const rpcMaxMessageSize = 32 << 20
+
+var errRPCClosed = errors.New("connection closed")
+
+type rpcConn struct {
+	p        *Plugin
+	endpoint string
+	ctx      context.Context
+	cancel   context.CancelFunc
+
+	onRequest      *lua.LFunction
+	onNotification *lua.LFunction
+	onClose        *lua.LFunction
+
+	mu         sync.Mutex
+	transport  io.ReadWriteCloser
+	conn       *jsonrpc.Conn
+	inbox      []func()
+	draining   bool
+	closedByUs bool
+	closed     bool
+}
+
+func setupRPCModule(L *lua.LState, p *Plugin) {
+	loader := func(L *lua.LState) int {
+		mod := L.NewTable()
+		if p.Granted.Check("network.rpc") == nil {
+			L.SetField(mod, "connect", L.NewFunction(rpcConnect(p)))
+		}
+		L.Push(mod)
+		return 1
+	}
+	L.PreloadModule("ttt.rpc", loader)
+
+	mt := L.NewTypeMetatable(rpcConnTypeName)
+	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+		"request": rpcRequest,
+		"notify":  rpcNotify,
+		"close":   rpcClose,
+	}))
+}
+
+func rpcConnect(p *Plugin) lua.LGFunction {
+	return func(L *lua.LState) int {
+		endpoint := L.CheckString(1)
+		opts := L.CheckTable(2)
+		callback := L.CheckFunction(3)
+		if err := p.Granted.CheckRPCEndpoint(endpoint); err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		if p.DialRPC == nil {
+			L.RaiseError("rpc API not available")
+			return 0
+		}
+		c := &rpcConn{p: p, endpoint: endpoint}
+		c.onRequest, _ = L.GetField(opts, "on_request").(*lua.LFunction)
+		c.onNotification, _ = L.GetField(opts, "on_notification").(*lua.LFunction)
+		c.onClose, _ = L.GetField(opts, "on_close").(*lua.LFunction)
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+		p.registerRPCConn(c)
+		go c.dial(callback)
+		return 0
+	}
+}
+
+func (c *rpcConn) dial(callback *lua.LFunction) {
+	p := c.p
+	transport, err := p.DialRPC(c.ctx, c.endpoint)
+	if err != nil {
+		p.unregisterRPCConn(c)
+		c.enqueue(func() {
+			if p.State != nil {
+				_ = p.CallLuaFunc(callback, lua.LNil, lua.LString(err.Error()))
+			}
+		})
+		return
+	}
+	connected := func() {
+		if p.State == nil {
+			return
+		}
+		ud := p.State.NewUserData()
+		ud.Value = c
+		p.State.SetMetatable(ud, p.State.GetTypeMetatable(rpcConnTypeName))
+		_ = p.CallLuaFunc(callback, ud, lua.LNil)
+	}
+
+	// Holding c.mu until the connected callback is queued keeps the read
+	// loop from queueing a peer message ahead of it.
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		transport.Close()
+		return
+	}
+	c.transport = transport
+	c.conn = jsonrpc.NewConn(transport, transport, jsonrpc.Options{
+		OnNotification: c.handleNotification,
+		OnRequest:      c.handleRequest,
+		OnClose:        c.handleClose,
+		MaxMessageSize: rpcMaxMessageSize,
+	})
+	post := c.enqueueLocked(connected)
+	c.mu.Unlock()
+	if post {
+		c.postDrain()
+	}
+}
+
+// enqueue runs fn on the UI goroutine. Everything a connection delivers goes
+// through one queue so callbacks run in arrival order: separate posts can be
+// reordered when the event queue is full.
+func (c *rpcConn) enqueue(fn func()) {
+	c.mu.Lock()
+	post := c.enqueueLocked(fn)
+	c.mu.Unlock()
+	if post {
+		c.postDrain()
+	}
+}
+
+func (c *rpcConn) enqueueLocked(fn func()) bool {
+	c.inbox = append(c.inbox, fn)
+	post := !c.draining
+	c.draining = true
+	return post
+}
+
+func (c *rpcConn) postDrain() {
+	c.p.SafePostAsync(&PluginAsyncResult{Plugin: c.p, Callback: c.drain})
+}
+
+func (c *rpcConn) drain() {
+	c.mu.Lock()
+	inbox := c.inbox
+	c.inbox = nil
+	c.draining = false
+	c.mu.Unlock()
+	for _, fn := range inbox {
+		fn()
+	}
+}
+
+func (c *rpcConn) handleNotification(method string, params json.RawMessage) {
+	if c.onNotification == nil {
+		return
+	}
+	c.enqueue(func() {
+		if c.p.State != nil {
+			_ = c.p.CallLuaFunc(c.onNotification, lua.LString(method), decodeRPCValue(c.p.State, params))
+		}
+	})
+}
+
+func (c *rpcConn) handleRequest(method string, params json.RawMessage) (any, error) {
+	if c.onRequest == nil {
+		return nil, &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "method not supported: " + method}
+	}
+	type reply struct {
+		result any
+		err    error
+	}
+	replies := make(chan reply, 1)
+	c.enqueue(func() {
+		L := c.p.State
+		if L == nil {
+			replies <- reply{err: errRPCClosed}
+			return
+		}
+		err := L.CallByParam(lua.P{Fn: c.onRequest, NRet: 1, Protect: true}, lua.LString(method), decodeRPCValue(L, params))
+		if err != nil {
+			replies <- reply{err: errors.New(luaErrorMessage(err))}
+			return
+		}
+		result := luaToGo(L.Get(-1))
+		L.Pop(1)
+		replies <- reply{result: result}
+	})
+	select {
+	case r := <-replies:
+		return r.result, r.err
+	case <-c.ctx.Done():
+		return nil, errRPCClosed
+	}
+}
+
+func (c *rpcConn) handleClose(err error) {
+	c.mu.Lock()
+	byUs := c.closedByUs
+	c.closed = true
+	c.mu.Unlock()
+	c.cancel()
+	c.p.unregisterRPCConn(c)
+	if c.onClose == nil {
+		return
+	}
+	c.enqueue(func() {
+		if c.p.State == nil {
+			return
+		}
+		reason := lua.LValue(lua.LNil)
+		if !byUs && err != nil && !errors.Is(err, io.EOF) {
+			reason = lua.LString(err.Error())
+		}
+		_ = c.p.CallLuaFunc(c.onClose, reason)
+	})
+}
+
+// close is safe from any goroutine and on a connection still dialing.
+func (c *rpcConn) close() {
+	c.mu.Lock()
+	c.closedByUs = true
+	c.closed = true
+	transport := c.transport
+	c.mu.Unlock()
+	c.cancel()
+	if transport != nil {
+		transport.Close()
+	}
+}
+
+func checkRPCConn(L *lua.LState) *rpcConn {
+	ud := L.CheckUserData(1)
+	c, ok := ud.Value.(*rpcConn)
+	if !ok {
+		L.ArgError(1, "rpc connection expected")
+	}
+	return c
+}
+
+func rpcRequest(L *lua.LState) int {
+	c := checkRPCConn(L)
+	method := L.CheckString(2)
+	params := luaToGo(L.Get(3))
+	callback := L.OptFunction(4, nil)
+	go func() {
+		result, err := c.conn.Call(c.ctx, method, params)
+		if callback == nil {
+			return
+		}
+		c.enqueue(func() {
+			if c.p.State == nil {
+				return
+			}
+			if err != nil {
+				_ = c.p.CallLuaFunc(callback, lua.LNil, lua.LString(c.callError(err)))
+				return
+			}
+			_ = c.p.CallLuaFunc(callback, decodeRPCValue(c.p.State, result), lua.LNil)
+		})
+	}()
+	return 0
+}
+
+func (c *rpcConn) callError(err error) string {
+	var rpcErr *jsonrpc.Error
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Message
+	}
+	if c.ctx.Err() != nil || errors.Is(err, jsonrpc.ErrClosed) {
+		return errRPCClosed.Error()
+	}
+	return err.Error()
+}
+
+func rpcNotify(L *lua.LState) int {
+	c := checkRPCConn(L)
+	method := L.CheckString(2)
+	if err := c.conn.Notify(method, luaToGo(L.Get(3))); err != nil {
+		L.Push(lua.LFalse)
+		L.Push(lua.LString(c.callError(err)))
+		return 2
+	}
+	L.Push(lua.LTrue)
+	return 1
+}
+
+func rpcClose(L *lua.LState) int {
+	checkRPCConn(L).close()
+	return 0
+}
+
+func decodeRPCValue(L *lua.LState, raw json.RawMessage) lua.LValue {
+	if len(raw) == 0 {
+		return lua.LNil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return lua.LNil
+	}
+	return goToLua(L, v)
+}
+
+func luaErrorMessage(err error) string {
+	var apiErr *lua.ApiError
+	if errors.As(err, &apiErr) && apiErr.Object != nil {
+		return apiErr.Object.String()
+	}
+	return err.Error()
+}
+
+func (p *Plugin) registerRPCConn(c *rpcConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.rpcConns == nil {
+		p.rpcConns = make(map[*rpcConn]struct{})
+	}
+	p.rpcConns[c] = struct{}{}
+}
+
+func (p *Plugin) unregisterRPCConn(c *rpcConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.rpcConns, c)
+}
+
+// closeRPCConnsLocked closes every connection; caller must hold p.mu.
+func (p *Plugin) closeRPCConnsLocked() {
+	for c := range p.rpcConns {
+		c.close()
+	}
+	p.rpcConns = nil
+}
