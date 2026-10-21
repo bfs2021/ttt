@@ -53,6 +53,7 @@ Packages are grouped by the dependency zones in [`ARCHITECTURE.md`](ARCHITECTURE
 
 - **`internal/git/`**: git CLI wrapper (status, staging, commit, repo discovery).
 - **`internal/github/`**: `gh` CLI wrapper for pull requests.
+- **`internal/jsonrpc/`**: JSON-RPC 2.0 with Content-Length framing: `Codec` and a bidirectional `Conn` (calls, notifications, and peer requests). Transport-agnostic; used by LSP.
 - **`internal/lsp/`**: language server client (see LSP Integration).
 - **`internal/terminal/`**: integrated terminal emulator. Wraps `eugenioenko/xterm-go` for VT parsing and `aymanbagabas/go-pty` for PTY lifecycle.
 - **`internal/watcher/`**: fsnotify-based reporting of on-disk changes to open files and watched directories.
@@ -129,7 +130,7 @@ Keybindings are defined in `internal/config/keybindings.go` (`DefaultKeybindings
 
 ### LSP Integration
 
-Language server support lives in `internal/lsp/`: a JSON-RPC 2.0 client over stdio with Content-Length framing and no external dependencies, one client per language, lazy-started on first use. Servers are configured under `lsp.servers` in settings (`LSPSettings` in `internal/config/settings.go`); `internal/app/app_lsp.go` wires the client into the editor.
+Language server support lives in `internal/lsp/`: a client over stdio built on `internal/jsonrpc`, with no external dependencies, one client per language, lazy-started on first use. Servers are configured under `lsp.servers` in settings (`LSPSettings` in `internal/config/settings.go`); `internal/app/app_lsp.go` wires the client into the editor.
 
 Async LSP results (completions, signature help, hover, and so on) wake the event loop with the same `PostEvent(EventInterrupt)` pattern as git blame. Document sync is full-document, not incremental.
 

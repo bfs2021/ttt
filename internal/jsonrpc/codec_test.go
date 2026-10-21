@@ -1,10 +1,11 @@
-package lsp
+package jsonrpc
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -170,5 +171,13 @@ func TestCodecReceiveMissingContentLength(t *testing.T) {
 	_, err := codec.Receive()
 	if err == nil {
 		t.Fatal("expected error for missing Content-Length")
+	}
+}
+
+func TestCodecRejectsOversizedMessageBeforeReading(t *testing.T) {
+	codec := NewCodec(bytes.NewReader([]byte("Content-Length: 1000000000\r\n\r\n{}")), nil)
+	codec.SetMaxContentLength(1024)
+	if _, err := codec.Receive(); err == nil || !strings.Contains(err.Error(), "exceeds the 1024 byte limit") {
+		t.Fatalf("error = %v", err)
 	}
 }

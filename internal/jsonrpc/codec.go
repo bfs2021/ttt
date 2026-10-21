@@ -1,4 +1,4 @@
-package lsp
+package jsonrpc
 
 import (
 	"bufio"
@@ -17,60 +17,61 @@ type Request struct {
 	Params  any    `json:"params,omitempty"`
 }
 
-// Response is any message read from the server, including requests ttt must
-// answer. ID stays raw so a string id can be echoed back exactly as sent.
-type Response struct {
+// Message is any message read from the peer, including requests that must be
+// answered. ID stays raw so a string id can be echoed back exactly as sent.
+type Message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	Error   *Error          `json:"error,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// HasID treats "id": null like an absent id; some servers send it on
+// HasID treats "id": null like an absent id; some peers send it on
 // notifications.
-func (r *Response) HasID() bool {
-	return len(r.ID) > 0 && string(r.ID) != "null"
+func (m *Message) HasID() bool {
+	return len(m.ID) > 0 && string(m.ID) != "null"
 }
 
-func (r *Response) IsNotification() bool {
-	return !r.HasID() && r.Method != ""
+func (m *Message) IsNotification() bool {
+	return !m.HasID() && m.Method != ""
 }
 
-func (r *Response) IsRequest() bool {
-	return r.HasID() && r.Method != ""
+func (m *Message) IsRequest() bool {
+	return m.HasID() && m.Method != ""
 }
 
-// Reply is ttt's answer to a server request. Result must be set (to the JSON
-// literal null if nothing else) unless Error is, because the protocol requires
-// exactly one of the two.
+// Reply answers a peer request. Result must be set (to the JSON literal null
+// if nothing else) unless Error is, because the protocol requires exactly one
+// of the two.
 type Reply struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
+	Error   *Error          `json:"error,omitempty"`
 }
 
 const (
-	CodeMethodNotFound  = -32601
-	CodeServerCancelled = -32802
+	CodeMethodNotFound = -32601
+	CodeInternalError  = -32603
 )
 
-type RPCError struct {
+type Error struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-func (e *RPCError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("jsonrpc error %d: %s", e.Code, e.Message)
 }
 
 type Codec struct {
-	reader *bufio.Reader
-	writer io.Writer
-	mu     sync.Mutex
+	reader           *bufio.Reader
+	writer           io.Writer
+	mu               sync.Mutex
+	maxContentLength int
 }
 
 func NewCodec(r io.Reader, w io.Writer) *Codec {
@@ -78,6 +79,12 @@ func NewCodec(r io.Reader, w io.Writer) *Codec {
 		reader: bufio.NewReader(r),
 		writer: w,
 	}
+}
+
+// SetMaxContentLength makes Receive reject messages larger than n bytes before
+// allocating them; 0 means no limit. Set it for peers that are not trusted.
+func (c *Codec) SetMaxContentLength(n int) {
+	c.maxContentLength = n
 }
 
 func (c *Codec) Send(msg any) error {
@@ -95,12 +102,12 @@ func (c *Codec) Send(msg any) error {
 	return err
 }
 
-func (c *Codec) Receive() (Response, error) {
+func (c *Codec) Receive() (Message, error) {
 	contentLen := -1
 	for {
 		line, err := c.reader.ReadString('\n')
 		if err != nil {
-			return Response{}, err
+			return Message{}, err
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
@@ -109,21 +116,24 @@ func (c *Codec) Receive() (Response, error) {
 		if val, ok := strings.CutPrefix(line, "Content-Length: "); ok {
 			n, err := strconv.Atoi(val)
 			if err != nil {
-				return Response{}, fmt.Errorf("bad Content-Length: %w", err)
+				return Message{}, fmt.Errorf("bad Content-Length: %w", err)
+			}
+			if c.maxContentLength > 0 && n > c.maxContentLength {
+				return Message{}, fmt.Errorf("message of %d bytes exceeds the %d byte limit", n, c.maxContentLength)
 			}
 			contentLen = n
 		}
 	}
 	if contentLen < 0 {
-		return Response{}, fmt.Errorf("missing Content-Length header")
+		return Message{}, fmt.Errorf("missing Content-Length header")
 	}
 	body := make([]byte, contentLen)
 	if _, err := io.ReadFull(c.reader, body); err != nil {
-		return Response{}, err
+		return Message{}, err
 	}
-	var resp Response
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return Response{}, err
+	var msg Message
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return Message{}, err
 	}
-	return resp, nil
+	return msg, nil
 }
