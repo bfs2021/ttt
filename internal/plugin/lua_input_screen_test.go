@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -115,5 +116,50 @@ func TestScreenCaptureWritesThroughPluginFilesystem(t *testing.T) {
 	}
 	if fs.written["/tmp/shot.txt"] != "screen" || fs.written["/tmp/state.json"] != "{}" {
 		t.Fatalf("written = %v", fs.written)
+	}
+}
+
+func TestKeyAndTypeRequireInputPermission(t *testing.T) {
+	for _, call := range []string{`ttt.key("ctrl+s")`, `ttt.type("hi")`} {
+		p, cleanup := newTestPluginBase(PermissionSet{})
+		called := false
+		p.SimulateKeys = func(string) error { called = true; return nil }
+		p.SimulateText = func(string) { called = true }
+		err := p.State.DoString(`local ttt = require("ttt")` + "\n" + call)
+		cleanup()
+		if err == nil || !strings.Contains(err.Error(), "input permission not granted") {
+			t.Fatalf("%s error = %v, want input permission error", call, err)
+		}
+		if called {
+			t.Fatalf("%s reached the input hook without permission", call)
+		}
+	}
+}
+
+func TestKeyAndTypeWithPermission(t *testing.T) {
+	p, cleanup := newTestPluginBase(PermissionSet{Input: true})
+	defer cleanup()
+	var keys, text []string
+	p.SimulateKeys = func(combo string) error {
+		if combo == "nope" {
+			return errors.New("unknown key")
+		}
+		keys = append(keys, combo)
+		return nil
+	}
+	p.SimulateText = func(s string) { text = append(text, s) }
+	if err := p.State.DoString(`
+		local ttt = require("ttt")
+		ttt.key("ctrl+k ctrl+s")
+		ttt.type("héllo")
+		ok, err = pcall(ttt.key, "nope")
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0] != "ctrl+k ctrl+s" || len(text) != 1 || text[0] != "héllo" {
+		t.Fatalf("keys = %q, text = %q", keys, text)
+	}
+	if p.State.GetGlobal("ok") != lua.LFalse || !strings.Contains(p.State.GetGlobal("err").String(), "unknown key") {
+		t.Fatalf("invalid combo: ok = %v, err = %v", p.State.GetGlobal("ok"), p.State.GetGlobal("err"))
 	}
 }

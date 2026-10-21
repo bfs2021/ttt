@@ -372,6 +372,8 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 			a.postPluginInput(tcell.NewEventMouse(x2, y2, tcell.ButtonNone, tcell.ModNone))
 		}()
 	}
+	p.SimulateKeys = a.simulatePluginKeys
+	p.SimulateText = a.simulatePluginText
 	p.ScreenText = a.Screenshot
 	p.DebugState = func() (string, error) {
 		data, err := json.MarshalIndent(a.BuildDebugState(), "", "  ")
@@ -1161,11 +1163,37 @@ func closePluginPanel(w ui.Widget) {
 // pluginInput is input a plugin synthesized. The event loop drops it while a
 // plugin approval dialog is open, so no plugin can grant permissions.
 type pluginInput struct {
-	Event tcell.Event
+	Events []tcell.Event
 }
 
-func (a *App) postPluginInput(ev tcell.Event) {
-	a.Screen.PostEvent(tcell.NewEventInterrupt(&pluginInput{Event: ev}))
+// postPluginInput sends events as one interrupt: PostEvent falls back to a
+// goroutine when the queue is full, which would reorder separate posts.
+func (a *App) postPluginInput(events ...tcell.Event) {
+	a.Screen.PostEvent(tcell.NewEventInterrupt(&pluginInput{Events: events}))
+}
+
+func (a *App) simulatePluginKeys(combo string) error {
+	steps, err := config.ParseKeyString(combo)
+	if err != nil {
+		return err
+	}
+	events := make([]tcell.Event, 0, len(steps))
+	for _, step := range steps {
+		key, mod, ch := comboToTcell(step)
+		events = append(events, tcell.NewEventKey(key, keyEventStr(ch), mod))
+	}
+	a.postPluginInput(events...)
+	return nil
+}
+
+func (a *App) simulatePluginText(text string) {
+	var events []tcell.Event
+	for _, r := range text {
+		events = append(events, tcell.NewEventKey(tcell.KeyRune, string(r), tcell.ModNone))
+	}
+	if len(events) > 0 {
+		a.postPluginInput(events...)
+	}
 }
 
 func (a *App) acceptsPluginInput() bool {

@@ -302,8 +302,11 @@ func RunEventLoop(
 					execRequest = v.Lifecycle
 				}
 			case *pluginInput:
-				if app.acceptsPluginInput() {
-					switch event := v.Event.(type) {
+				for _, ev := range v.Events {
+					if !app.acceptsPluginInput() {
+						break
+					}
+					switch event := ev.(type) {
 					case *tcell.EventKey:
 						handleKey(event)
 					case *tcell.EventMouse:

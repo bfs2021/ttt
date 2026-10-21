@@ -89,6 +89,8 @@ type Plugin struct {
 	Terminal           TerminalAPI
 	SimulateClick      func(x, y int)
 	SimulateDrag       func(x1, y1, x2, y2 int)
+	SimulateKeys       func(combo string) error
+	SimulateText       func(text string)
 	ScreenText         func() string
 	DebugState         func() (string, error)
 	QuitApp            func()
@@ -303,6 +305,8 @@ func (p *Plugin) Destroy() {
 	p.Borders = nil
 	p.SimulateClick = nil
 	p.SimulateDrag = nil
+	p.SimulateKeys = nil
+	p.SimulateText = nil
 	p.ScreenText = nil
 	p.DebugState = nil
 	p.QuitApp = nil

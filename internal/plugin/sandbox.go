@@ -555,6 +555,32 @@ func setupTTTModule(L *lua.LState, p *Plugin) {
 			return 0
 		}))
 
+		L.SetField(mod, "key", L.NewFunction(func(L *lua.LState) int {
+			if err := p.Granted.Check("input"); err != nil {
+				L.ArgError(1, "input permission not granted")
+				return 0
+			}
+			combo := L.CheckString(1)
+			if p.SimulateKeys != nil {
+				if err := p.SimulateKeys(combo); err != nil {
+					L.ArgError(1, err.Error())
+				}
+			}
+			return 0
+		}))
+
+		L.SetField(mod, "type", L.NewFunction(func(L *lua.LState) int {
+			if err := p.Granted.Check("input"); err != nil {
+				L.ArgError(1, "input permission not granted")
+				return 0
+			}
+			text := L.CheckString(1)
+			if p.SimulateText != nil {
+				p.SimulateText(text)
+			}
+			return 0
+		}))
+
 		L.SetField(mod, "screenshot", L.NewFunction(func(L *lua.LState) int {
 			text := ""
 			if p.ScreenText != nil {

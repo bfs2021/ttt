@@ -949,9 +949,11 @@ These drive and capture the editor for automated testing (see [Testing Plugins](
 | `ttt.debug([path])` | `screen.read`, `editor.read`, `terminal.read` | Return the editor's full state as JSON (cursor, buffer, panels, widget tree, OUTPUT log, terminal history), or write it to `path` (also needs `fs.write`). |
 | `ttt.click(x, y)` | `input` | Simulate a mouse click at screen coordinates. |
 | `ttt.drag(x1, y1, x2, y2)` | `input` | Simulate a mouse drag between two points. |
+| `ttt.key(combo)` | `input` | Press a key combo or chord, written as in keybindings (`"ctrl+s"`, `"ctrl+k ctrl+s"`). Raises an error for an unknown key. |
+| `ttt.type(text)` | `input` | Type text as individual key presses. |
 | `ttt.quit()` | none | Exit the editor. |
 
-Simulated input is dropped while a plugin approval dialog is open, so no plugin can grant permissions on the user's behalf.
+Simulated input is queued and handled after the current callback returns, in the order it was sent. It is dropped while a plugin approval dialog is open, so no plugin can grant permissions on the user's behalf.
 
 ### `ttt.json` Module
 
@@ -2801,7 +2803,7 @@ Permissions are declared in the manifest's `permissions` object. Boolean permiss
 | `settings_keys`  | string[] | Allowed settings key patterns. Use `group.*` for prefix match or exact key. |
 | `storage`        | boolean  | Persist private plugin data (`ttt.storage`).      |
 | `clipboard.read` | boolean  | Read the system clipboard (`ttt.clipboard_read`). |
-| `input`          | boolean  | Simulate mouse input (`ttt.click`, `ttt.drag`). |
+| `input`          | boolean  | Simulate mouse and keyboard input (`ttt.click`, `ttt.drag`, `ttt.key`, `ttt.type`). |
 | `screen.read`    | boolean  | Capture the rendered screen (`ttt.screenshot`) and, with `editor.read` and `terminal.read`, the editor state (`ttt.debug`). |
 
 **Example with multiple permissions:**
