@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -371,11 +372,10 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 			a.postPluginInput(tcell.NewEventMouse(x2, y2, tcell.ButtonNone, tcell.ModNone))
 		}()
 	}
-	p.ScreenshotToFile = func(path string) error {
-		return a.DumpScreenshot(path)
-	}
-	p.DebugDumpToFile = func(path string) error {
-		return a.DumpDebugState(path)
+	p.ScreenText = a.Screenshot
+	p.DebugState = func() (string, error) {
+		data, err := json.MarshalIndent(a.BuildDebugState(), "", "  ")
+		return string(data), err
 	}
 	p.QuitApp = func() {
 		if a.Running != nil {

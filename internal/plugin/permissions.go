@@ -316,6 +316,8 @@ type PermissionSet struct {
 	SettingsKeys      []string    `json:"settings_keys,omitempty"`
 	Storage           bool        `json:"storage,omitempty"`
 	ClipboardRead     bool        `json:"clipboard.read,omitempty"`
+	Input             bool        `json:"input,omitempty"`
+	ScreenRead        bool        `json:"screen.read,omitempty"`
 }
 
 type PermissionDiffEntry struct {
@@ -365,6 +367,8 @@ func DiffPermissions(granted, requested PermissionSet) PermissionDiff {
 	check("settings", granted.Settings, requested.Settings)
 	check("storage", granted.Storage, requested.Storage)
 	check("clipboard.read", granted.ClipboardRead, requested.ClipboardRead)
+	check("input", granted.Input, requested.Input)
+	check("screen.read", granted.ScreenRead, requested.ScreenRead)
 
 	grantedSettingsKeys := make(map[string]bool)
 	for _, k := range granted.SettingsKeys {
@@ -452,6 +456,10 @@ func (ps PermissionSet) Check(perm string) error {
 		allowed = ps.Storage
 	case "clipboard.read":
 		allowed = ps.ClipboardRead
+	case "input":
+		allowed = ps.Input
+	case "screen.read":
+		allowed = ps.ScreenRead
 	default:
 		return fmt.Errorf("unknown permission: %s", perm)
 	}
@@ -528,6 +536,8 @@ func (ps PermissionSet) DisplayEntries() []PermissionDiffEntry {
 	add("Editor events", ps.EventsEditor)
 	add("Plugin storage", ps.Storage)
 	add("Clipboard read", ps.ClipboardRead)
+	add("Simulate input", ps.Input)
+	add("Read screen", ps.ScreenRead)
 
 	for _, b := range ps.SystemExec {
 		entries = append(entries, PermissionDiffEntry{Name: "Run binary", Value: b})
@@ -577,6 +587,8 @@ func IntersectPermissions(granted, declared PermissionSet) PermissionSet {
 		SettingsKeys:      intersectStrings(granted.SettingsKeys, declared.SettingsKeys),
 		Storage:           granted.Storage && declared.Storage,
 		ClipboardRead:     granted.ClipboardRead && declared.ClipboardRead,
+		Input:             granted.Input && declared.Input,
+		ScreenRead:        granted.ScreenRead && declared.ScreenRead,
 	}
 }
 

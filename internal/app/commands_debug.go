@@ -146,6 +146,10 @@ func (a *App) debugRunPlugin() {
 			EventsEditor:      true,
 			Storage:           true,
 			ClipboardRead:     true,
+			Input:             true,
+			ScreenRead:        true,
+			TerminalControl:   true,
+			TerminalRead:      true,
 		},
 	}
 
@@ -269,6 +273,10 @@ func LoadPluginFromFile(a *App, path string) {
 			Settings:          true,
 			SettingsKeys:      []string{"*"},
 			ClipboardRead:     true,
+			Input:             true,
+			ScreenRead:        true,
+			TerminalControl:   true,
+			TerminalRead:      true,
 		},
 	}
 

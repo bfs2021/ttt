@@ -110,6 +110,8 @@ Available permissions include:
 | `settings_keys` | Which settings keys the plugin can access (e.g. `formatters.*`) |
 | `storage` | Persist private plugin data |
 | `clipboard.read` | Read the system clipboard |
+| `input` | Simulate mouse clicks and drags |
+| `screen.read` | Read the rendered screen and editor state |
 
 ## Disabling the Plugin System
 

@@ -89,8 +89,8 @@ type Plugin struct {
 	Terminal           TerminalAPI
 	SimulateClick      func(x, y int)
 	SimulateDrag       func(x1, y1, x2, y2 int)
-	ScreenshotToFile   func(path string) error
-	DebugDumpToFile    func(path string) error
+	ScreenText         func() string
+	DebugState         func() (string, error)
 	QuitApp            func()
 	OpenFile           func(path string, line int, readonly bool)
 	OpenDiff           func(title string, oldLines, newLines []string, filePath string, extended bool, diffText string)
@@ -303,8 +303,8 @@ func (p *Plugin) Destroy() {
 	p.Borders = nil
 	p.SimulateClick = nil
 	p.SimulateDrag = nil
-	p.ScreenshotToFile = nil
-	p.DebugDumpToFile = nil
+	p.ScreenText = nil
+	p.DebugState = nil
 	p.QuitApp = nil
 	p.Notify = nil
 	p.OpenDiff = nil

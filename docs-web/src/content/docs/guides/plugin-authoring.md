@@ -941,15 +941,17 @@ local lines = ttt.markdown("# Hello\nSome **bold** text")
 
 ### Debug helpers
 
-These drive and capture the editor for automated testing (see [Testing Plugins](/guides/plugin-testing/)). They are the Lua equivalents of the `--exec` script commands. No permission required.
+These drive and capture the editor for automated testing (see [Testing Plugins](/guides/plugin-testing/)). They are the Lua equivalents of the `--exec` script commands.
 
-| Function | Description |
-|----------|-------------|
-| `ttt.screenshot(path)` | Write the current screen (plain text) to a file. |
-| `ttt.debug(path)` | Write the editor's full state as JSON to a file (cursor, panels, widget tree, OUTPUT log). |
-| `ttt.click(x, y)` | Simulate a mouse click at screen coordinates. |
-| `ttt.drag(x1, y1, x2, y2)` | Simulate a mouse drag between two points. |
-| `ttt.quit()` | Exit the editor. |
+| Function | Permission | Description |
+|----------|------------|-------------|
+| `ttt.screenshot([path])` | `screen.read` | Return the current screen as plain text, or write it to `path` (also needs `fs.write` covering `path`). |
+| `ttt.debug([path])` | `screen.read`, `editor.read`, `terminal.read` | Return the editor's full state as JSON (cursor, buffer, panels, widget tree, OUTPUT log, terminal history), or write it to `path` (also needs `fs.write`). |
+| `ttt.click(x, y)` | `input` | Simulate a mouse click at screen coordinates. |
+| `ttt.drag(x1, y1, x2, y2)` | `input` | Simulate a mouse drag between two points. |
+| `ttt.quit()` | none | Exit the editor. |
+
+Simulated input is dropped while a plugin approval dialog is open, so no plugin can grant permissions on the user's behalf.
 
 ### `ttt.json` Module
 
@@ -2798,7 +2800,9 @@ Permissions are declared in the manifest's `permissions` object. Boolean permiss
 | `settings`       | boolean  | Read/write editor settings (`ttt.settings`).      |
 | `settings_keys`  | string[] | Allowed settings key patterns. Use `group.*` for prefix match or exact key. |
 | `storage`        | boolean  | Persist private plugin data (`ttt.storage`).      |
-| `clipboard.read` | boolean  | Read the system clipboard (`ttt.clipboard_read`). | 
+| `clipboard.read` | boolean  | Read the system clipboard (`ttt.clipboard_read`). |
+| `input`          | boolean  | Simulate mouse input (`ttt.click`, `ttt.drag`). |
+| `screen.read`    | boolean  | Capture the rendered screen (`ttt.screenshot`) and, with `editor.read` and `terminal.read`, the editor state (`ttt.debug`). |
 
 **Example with multiple permissions:**
 

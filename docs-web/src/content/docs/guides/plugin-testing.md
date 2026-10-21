@@ -138,7 +138,9 @@ expect(snapshots[s]).toContain("tick 3");
 
 The same capture functions are available from Lua, so a plugin can screenshot or dump state from inside a callback:
 
-- `ttt.screenshot(path)` — write the screen to a file
-- `ttt.debug(path)` — write the state dump to a file
-- `ttt.click(x, y)` / `ttt.drag(x1, y1, x2, y2)` — simulate input
-- `ttt.quit()` — exit the editor
+- `ttt.screenshot([path])`: return the screen as text, or write it to a file
+- `ttt.debug([path])`: return the state dump as JSON, or write it to a file
+- `ttt.click(x, y)` / `ttt.drag(x1, y1, x2, y2)`: simulate input
+- `ttt.quit()`: exit the editor
+
+Capturing needs the `screen.read` permission (`ttt.debug` also needs `editor.read` and `terminal.read`), and writing to a file also needs `fs.write` covering the path. Simulated input needs `input`. Plugins loaded with `--plugin` have every permission.

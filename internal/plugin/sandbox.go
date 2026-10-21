@@ -528,6 +528,10 @@ func setupTTTModule(L *lua.LState, p *Plugin) {
 		}))
 
 		L.SetField(mod, "click", L.NewFunction(func(L *lua.LState) int {
+			if err := p.Granted.Check("input"); err != nil {
+				L.ArgError(1, "input permission not granted")
+				return 0
+			}
 			x := L.CheckInt(1)
 			y := L.CheckInt(2)
 			if p.SimulateClick != nil {
@@ -537,6 +541,10 @@ func setupTTTModule(L *lua.LState, p *Plugin) {
 		}))
 
 		L.SetField(mod, "drag", L.NewFunction(func(L *lua.LState) int {
+			if err := p.Granted.Check("input"); err != nil {
+				L.ArgError(1, "input permission not granted")
+				return 0
+			}
 			x1 := L.CheckInt(1)
 			y1 := L.CheckInt(2)
 			x2 := L.CheckInt(3)
@@ -548,23 +556,26 @@ func setupTTTModule(L *lua.LState, p *Plugin) {
 		}))
 
 		L.SetField(mod, "screenshot", L.NewFunction(func(L *lua.LState) int {
-			path := L.CheckString(1)
-			if p.ScreenshotToFile != nil {
-				if err := p.ScreenshotToFile(path); err != nil {
-					L.ArgError(1, err.Error())
-				}
+			text := ""
+			if p.ScreenText != nil {
+				text = p.ScreenText()
 			}
-			return 0
+			return pushScreenCapture(L, p, text, nil)
 		}))
 
 		L.SetField(mod, "debug", L.NewFunction(func(L *lua.LState) int {
-			path := L.CheckString(1)
-			if p.DebugDumpToFile != nil {
-				if err := p.DebugDumpToFile(path); err != nil {
-					L.ArgError(1, err.Error())
+			for _, perm := range []string{"screen.read", "editor.read", "terminal.read"} {
+				if err := p.Granted.Check(perm); err != nil {
+					L.ArgError(1, perm+" permission not granted")
+					return 0
 				}
 			}
-			return 0
+			var text string
+			var err error
+			if p.DebugState != nil {
+				text, err = p.DebugState()
+			}
+			return pushScreenCapture(L, p, text, err)
 		}))
 
 		L.SetField(mod, "quit", L.NewFunction(func(L *lua.LState) int {
@@ -751,4 +762,30 @@ func luaTableToStrings(_ *lua.LState, tbl *lua.LTable) []string {
 		}
 	})
 	return result
+}
+
+// pushScreenCapture returns the capture to Lua, or writes it to the path in
+// argument 1 through the plugin filesystem so the write stays inside fs.write.
+func pushScreenCapture(L *lua.LState, p *Plugin, text string, err error) int {
+	if permErr := p.Granted.Check("screen.read"); permErr != nil {
+		L.ArgError(1, "screen.read permission not granted")
+		return 0
+	}
+	if err != nil {
+		L.RaiseError("%s", err.Error())
+		return 0
+	}
+	if L.Get(1) == lua.LNil {
+		L.Push(lua.LString(text))
+		return 1
+	}
+	path := L.CheckString(1)
+	if p.Filesystem == nil {
+		L.ArgError(1, "filesystem API not available")
+		return 0
+	}
+	if err := p.Filesystem.WriteFile(path, text); err != nil {
+		L.ArgError(1, err.Error())
+	}
+	return 0
 }
