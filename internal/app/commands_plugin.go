@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -477,9 +478,9 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 		}
 		return result
 	}
-	p.PostAsync = func(result *plugin.PluginAsyncResult) {
+	p.SetPostAsync(func(result *plugin.PluginAsyncResult) {
 		a.Screen.PostEvent(tcell.NewEventInterrupt(result))
-	}
+	})
 	pluginSource := "plugin:" + p.Name
 	p.PublishDiagnostics = func(path string, items []plugin.DiagnosticItem) {
 		diags := make([]ui.Diagnostic, 0, len(items))
@@ -582,6 +583,9 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 	}
 	p.Filesystem = fs
 	p.DialRPC = dialPluginRPC(fs.vars)
+	p.RunAutomation = func(ctx context.Context, action, args string) (json.RawMessage, error) {
+		return a.runPluginAutomation(ctx, p, action, args)
+	}
 	p.System = NewPluginSystemAPI()
 	p.Terminal = NewPluginTerminalAPI(a)
 	if system, ok := p.System.(*PluginSystemAPI); ok {
@@ -1164,7 +1168,9 @@ func closePluginPanel(w ui.Widget) {
 // pluginInput is input a plugin synthesized. The event loop drops it while a
 // plugin approval dialog is open, so no plugin can grant permissions.
 type pluginInput struct {
-	Events []tcell.Event
+	Events    []tcell.Event
+	Lifecycle *execRequestLifecycle
+	Allowed   func() bool
 }
 
 // postPluginInput sends events as one interrupt: PostEvent falls back to a

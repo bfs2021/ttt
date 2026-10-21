@@ -335,9 +335,9 @@ Docs: https://tttedit.dev
 			p.RequestRedraw = func() {
 				screen.PostEvent(tcell.NewEventInterrupt(nil))
 			}
-			p.PostAsync = func(result *plugin.PluginAsyncResult) {
+			p.SetPostAsync(func(result *plugin.PluginAsyncResult) {
 				screen.PostEvent(tcell.NewEventInterrupt(result))
-			}
+			})
 		}
 		editor.RegisterStartupPluginCommands()
 

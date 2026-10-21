@@ -302,8 +302,13 @@ func RunEventLoop(
 					execRequest = v.Lifecycle
 				}
 			case *pluginInput:
+				if v.Lifecycle != nil && !v.Lifecycle.claim() {
+					break
+				}
+				execRequest = v.Lifecycle
 				for _, ev := range v.Events {
-					if !app.acceptsPluginInput() {
+					if !app.acceptsPluginInput() || (v.Allowed != nil && !v.Allowed()) {
+						execErr = failedExec("plugin input unavailable while permissions are pending or plugin is unloaded")
 						break
 					}
 					switch event := ev.(type) {

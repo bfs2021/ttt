@@ -955,6 +955,8 @@ These drive and capture the editor for automated testing (see [Testing Plugins](
 
 Simulated input is queued and handled after the current callback returns, in the order it was sent. It is dropped while a plugin approval dialog is open, so no plugin can grant permissions on the user's behalf.
 
+These calls do not report when the input has been applied. When you need to know, for example to read the screen after a key press, use [`ttt.automation`](#automation-api) instead.
+
 ### `ttt.json` Module
 
 The `ttt.json` module provides JSON encoding and decoding. No permission required.
@@ -2552,6 +2554,38 @@ rpc.connect("unix:~/.cache/my-hub.sock", {
   conn:notify("hello", { version = ttt.version() })
 end)
 ```
+
+## Automation API
+
+`ttt.automation` provides acknowledged actions for companion processes, such as an agent driving the editor over [`ttt.rpc`](#rpc-api). Use it when you need to know an action has been applied before doing the next thing; for input that does not need confirmation, `ttt.key`, `ttt.type`, `ttt.click` and `ttt.drag` are simpler and send their events in one batch. Call `automation.run(action, args, callback)` on the UI thread. It returns a cancellation function; `callback(result, err)` runs on the main thread after the action has been handled and redrawn. Unloading the plugin cancels outstanding automation. Already-applied changes remain available to normal undo.
+
+```lua
+local automation = require("ttt.automation")
+local cancel = automation.run("paste", "hello\nworld", function(result, err)
+  if err then ttt.log("error", err) end
+end)
+```
+
+| Action | Permission | Arguments / result |
+|--------|------------|--------------------|
+| `session` | `editor.read` | No arguments; returns PID, workspace paths, active file and ttt version. |
+| `buffer` | `editor.read` | No arguments; returns path, complete text and one-based cursor. |
+| `screenshot` | `screen.read` | No arguments; returns the screen text. |
+| `debug` | `screen.read`, `editor.read`, `terminal.read` | No arguments; returns the structured debug state, which includes buffer text and terminal history. |
+| `commands` | `commands` | No arguments; returns command IDs and titles. |
+| `command`, `exec` | `commands` | Command ID or exact command title. |
+| `open` | `commands` | JSON object string with `path`, optional one-based `line` and `readonly`. |
+| `panel`, `copy` | `commands` | Bottom panel ID, or no arguments for copy. |
+| `clipboard` | `clipboard.read` | No arguments; returns clipboard text. |
+| `click`, `rclick`, `hover` | `input` | `x y`, in zero-based screen cells. |
+| `drag` | `input` | `x1 y1 x2 y2`. |
+| `scroll` | `input` | `x y signed-count`, positive down; maximum magnitude 1000. |
+| `key` | `input` | Key combination or chord, as in keybindings. |
+| `type`, `paste` | `input` | Literal text; paste uses the editor's undoable paste path. |
+| `wait` | `input` | Milliseconds, at most 30000. |
+| `wait-for` | `screen.read` | Screen text and optional `timeout=MS`, as in `--exec`; at most 30000 ms, default 5000. |
+
+Call `cancel()` to stop waiting and prevent queued events from applying. Claimed events finish handling before cancellation returns through the callback. Actions fail while plugin permission approvals are pending; synthesized input cannot approve permissions. Commands may start external work that continues after their acknowledgment; use `wait-for` or inspect state to observe its completion.
 
 ## Events API
 

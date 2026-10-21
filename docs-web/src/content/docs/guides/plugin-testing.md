@@ -142,6 +142,7 @@ The same capture functions are available from Lua, so a plugin can screenshot or
 - `ttt.debug([path])`: return the state dump as JSON, or write it to a file
 - `ttt.click(x, y)` / `ttt.drag(x1, y1, x2, y2)`: simulate mouse input
 - `ttt.key(combo)` / `ttt.type(text)`: simulate keyboard input
+- `require("ttt.automation").run(action, args, callback)`: run an `--exec` style action and get a callback once it has been handled and redrawn
 - `ttt.quit()`: exit the editor
 
 Capturing needs the `screen.read` permission (`ttt.debug` also needs `editor.read` and `terminal.read`), and writing to a file also needs `fs.write` covering the path. Simulated input needs `input`. Plugins loaded with `--plugin` have every permission.

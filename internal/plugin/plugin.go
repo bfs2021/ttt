@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -94,6 +95,7 @@ type Plugin struct {
 	SimulateKeys       func(combo string) error
 	SimulateText       func(text string)
 	DialRPC            func(ctx context.Context, endpoint string) (io.ReadWriteCloser, error)
+	RunAutomation      func(ctx context.Context, action, args string) (json.RawMessage, error)
 	ScreenText         func() string
 	DebugState         func() (string, error)
 	QuitApp            func()
@@ -177,6 +179,7 @@ func (p *Plugin) Init() error {
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
 	setupRPCModule(p.State, p)
+	setupAutomationModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -226,6 +229,7 @@ func (p *Plugin) InitFromSource(source string) error {
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
 	setupRPCModule(p.State, p)
+	setupAutomationModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -258,6 +262,12 @@ func (p *Plugin) logError(context string, err error) {
 			p.Log("error", fmt.Sprintf("plugin %q disabled after %d errors", p.Name, p.errorCount))
 		}
 	}
+}
+
+func (p *Plugin) SetPostAsync(post func(*PluginAsyncResult)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.PostAsync = post
 }
 
 func (p *Plugin) SafePostAsync(result *PluginAsyncResult) {
@@ -315,6 +325,7 @@ func (p *Plugin) Destroy() {
 	p.SimulateKeys = nil
 	p.SimulateText = nil
 	p.DialRPC = nil
+	p.RunAutomation = nil
 	p.ScreenText = nil
 	p.DebugState = nil
 	p.QuitApp = nil
