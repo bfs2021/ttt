@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -649,13 +650,47 @@ func TestDenyingALegacyNetworkGrantDoesNotRestoreIt(t *testing.T) {
 	if entry.Permissions.NetworkHTTP.Enabled() {
 		t.Errorf("the denied plugin kept its network grant: %+v", entry.Permissions.NetworkHTTP)
 	}
-	// A restart must not bring the old grant back either.
+	// Read the file without LoadRegistry's migration: the denial itself must
+	// have been persisted, not just the in-memory grant cleared.
+	savedBytes, err := os.ReadFile(regPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []RegistryEntry
+	if err := json.Unmarshal(savedBytes, &saved); err != nil {
+		t.Fatal(err)
+	}
+	savedEntry := findRegistryEntry(saved, "old-listed")
+	if savedEntry == nil {
+		t.Fatal("the denied plugin is missing from the saved registry")
+	}
+	if savedEntry.Enabled {
+		t.Error("the denied plugin is still enabled in the saved registry")
+	}
+	if savedEntry.Permissions.NetworkHTTP.Enabled() {
+		t.Errorf("the saved registry kept the denied network grant: %+v", savedEntry.Permissions.NetworkHTTP)
+	}
+	if savedEntry.GrantsVersion != grantsVersion {
+		t.Errorf("saved grants version = %d, want %d", savedEntry.GrantsVersion, grantsVersion)
+	}
+	// A restart must neither bring the old grant back nor ask for it again.
 	again := NewManager(pluginsDir, regPath)
 	t.Cleanup(again.Shutdown)
-	again.LoadAll()
+	if pending := again.LoadAll(); len(pending) != 0 {
+		t.Errorf("the denied plugin was asked for again after a restart: %v", pending)
+	}
 	if entry := again.registry.Find("old-listed"); entry != nil && entry.Permissions.NetworkHTTP.Enabled() {
 		t.Errorf("the old network grant came back after a restart: %+v", entry.Permissions.NetworkHTTP)
 	}
+}
+
+func findRegistryEntry(entries []RegistryEntry, name string) *RegistryEntry {
+	for i := range entries {
+		if entries[i].Name == name {
+			return &entries[i]
+		}
+	}
+	return nil
 }
 
 func TestAnAnyDestinationGrantApprovedNowIsNotAskedForAgain(t *testing.T) {
