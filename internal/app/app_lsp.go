@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/core/buffer"
 	"github.com/eugenioenko/ttt/internal/core/undo"
 	"github.com/eugenioenko/ttt/internal/lsp"
 	"github.com/eugenioenko/ttt/internal/ui"
@@ -323,6 +324,7 @@ func (a *App) RequestFormatting(path, lang string) {
 	workDir := a.lspWorkDir(path)
 	tabSize, insertSpaces := a.editorTabSize()
 	version := a.editorBufferVersion()
+	buf := a.editorBuffer()
 	go func() {
 		client, err := a.LspManager.ClientForLanguage(serverKey, workDir)
 		if err != nil {
@@ -336,7 +338,7 @@ func (a *App) RequestFormatting(path, lang string) {
 		}
 		if len(edits) > 0 {
 			a.Screen.PostEvent(tcell.NewEventInterrupt(&FormattingResult{
-				Path: path, Version: version, Edits: edits,
+				Path: path, Version: version, Buffer: buf, Edits: edits,
 			}))
 		}
 	}()
@@ -353,6 +355,7 @@ func (a *App) RequestRangeFormatting(path, lang string, startLine, startCol, end
 	workDir := a.lspWorkDir(path)
 	tabSize, insertSpaces := a.editorTabSize()
 	version := a.editorBufferVersion()
+	buf := a.editorBuffer()
 	r := lsp.Range{
 		Start: lsp.Position{Line: startLine, Character: startCol},
 		End:   lsp.Position{Line: endLine, Character: endCol},
@@ -370,7 +373,7 @@ func (a *App) RequestRangeFormatting(path, lang string, startLine, startCol, end
 		}
 		if len(edits) > 0 {
 			a.Screen.PostEvent(tcell.NewEventInterrupt(&FormattingResult{
-				Path: path, Version: version, Edits: edits,
+				Path: path, Version: version, Buffer: buf, Edits: edits,
 			}))
 		}
 	}()
@@ -671,6 +674,15 @@ func (a *App) editorBufferVersion() uint64 {
 	return a.EditorGroup.Editor.Buf.Version()
 }
 
+// editorBuffer is the buffer instance being edited, so a formatting result
+// captured for it can be told apart from a reopened buffer of the same path.
+func (a *App) editorBuffer() *buffer.Buffer {
+	if a.EditorGroup.Editor == nil {
+		return nil
+	}
+	return a.EditorGroup.Editor.Buf
+}
+
 // applyFormattingResult applies a formatting result to the file the server
 // formatted. A result that arrives for another file, or for a buffer that
 // changed while the server was formatting, is dropped: applying it would
@@ -683,6 +695,10 @@ func (a *App) applyFormattingResult(v *FormattingResult) {
 	path, _ := a.editorPathLang()
 	if path != v.Path {
 		a.StatusWarn("Formatting result discarded: " + filepath.Base(v.Path) + " is no longer the open file")
+		return
+	}
+	if v.Buffer == nil || editor.Buf != v.Buffer {
+		a.StatusWarn("Formatting result discarded: the file was reopened while it was formatted")
 		return
 	}
 	if editor.Buf.Version() != v.Version {

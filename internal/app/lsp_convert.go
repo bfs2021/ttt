@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/eugenioenko/ttt/internal/core/buffer"
 	"github.com/eugenioenko/ttt/internal/lsp"
 	"github.com/eugenioenko/ttt/internal/ui"
 )
@@ -30,8 +31,12 @@ type FormattingResult struct {
 	// Path is the file the server formatted and Version the buffer it
 	// formatted, so a result that arrives for another file, or for a buffer
 	// that changed in the meantime, is not applied to the wrong one (#876).
+	// Buffer identifies the buffer instance: closing and reopening the same
+	// path starts a new buffer whose version counter can match the old result
+	// (#1084).
 	Path    string
 	Version uint64
+	Buffer  *buffer.Buffer
 	Edits   []lsp.TextEdit
 }
 
