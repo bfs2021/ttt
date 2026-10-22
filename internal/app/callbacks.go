@@ -426,22 +426,22 @@ func diffSideLines(content string) []string {
 }
 
 func (a *App) OpenCommitDiff(dir, ref, short string, status git.FileStatus, extended bool) {
-	a.startDiffOpen(func(ctx context.Context) *DiffOpenResult {
+	a.startDiffOpen(func(ctx context.Context) *diffOpenResult {
 		return readCommitDiff(ctx, dir, ref, short, status, extended)
 	})
 }
 
-func readCommitDiff(ctx context.Context, dir, ref, short string, status git.FileStatus, extended bool) *DiffOpenResult {
+func readCommitDiff(ctx context.Context, dir, ref, short string, status git.FileStatus, extended bool) *diffOpenResult {
 	diffText, err := git.CommitFileDiffContext(ctx, dir, ref, status)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return &DiffOpenResult{Canceled: true}
+			return &diffOpenResult{Canceled: true}
 		}
-		return &DiffOpenResult{Warn: fmt.Sprintf("Could not read %s at %s", status.Path, short)}
+		return &diffOpenResult{Warn: fmt.Sprintf("Could not read %s at %s", status.Path, short)}
 	}
 	parsed := diff.Parse(diffText)
 	if len(parsed.Hunks) == 0 {
-		return &DiffOpenResult{Warn: fmt.Sprintf("No line changes for %s in %s", status.Path, short)}
+		return &diffOpenResult{Warn: fmt.Sprintf("No line changes for %s in %s", status.Path, short)}
 	}
 	oldPath := status.Path
 	if status.OldPath != "" {
@@ -450,9 +450,9 @@ func readCommitDiff(ctx context.Context, dir, ref, short string, status git.File
 	oldLines := gitFileLines(ctx, dir, oldPath, ref+"^")
 	newLines := gitFileLines(ctx, dir, status.Path, ref)
 	if ctx.Err() != nil {
-		return &DiffOpenResult{Canceled: true}
+		return &diffOpenResult{Canceled: true}
 	}
-	return &DiffOpenResult{
+	return &diffOpenResult{
 		TabName:  fmt.Sprintf("%s:%s (diff)", ref, status.Path),
 		Title:    fmt.Sprintf("%s @ %s", filepath.Base(status.Path), short),
 		Path:     status.Path,

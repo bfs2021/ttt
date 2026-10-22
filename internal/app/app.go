@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"github.com/eugenioenko/ttt/internal/highlight"
 	"log/slog"
@@ -88,8 +87,7 @@ type App struct {
 	LspCompletionItems     []lsp.CompletionItem
 	completion             completionState
 	hover                  hoverState
-	diffOpenGen            int
-	diffOpenCancel         context.CancelFunc
+	diffOpenTask           *asynctask.Task[*diffOpenResult]
 	Problems               *ui.ProblemsWidget
 	References             *ui.ReferencesWidget
 	Keybindings            []config.KeyBinding

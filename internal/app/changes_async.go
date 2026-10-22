@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eugenioenko/ttt/internal/asynctask"
 	"github.com/eugenioenko/ttt/internal/core/diff"
 	"github.com/eugenioenko/ttt/internal/git"
 	"github.com/eugenioenko/ttt/internal/icons"
@@ -633,9 +634,7 @@ func (a *App) ApplyCommitDetail(result *CommitDetailResult) {
 	detail.SetDetail(result.Message, result.Files, result.Err)
 }
 
-type DiffOpenResult struct {
-	Gen      int
-	Origin   string
+type diffOpenResult struct {
 	Canceled bool
 	Warn     string
 	TabName  string
@@ -648,52 +647,44 @@ type DiffOpenResult struct {
 }
 
 func (a *App) cancelPendingDiff() {
-	a.diffOpenGen++
-	if a.diffOpenCancel != nil {
-		a.diffOpenCancel()
-		a.diffOpenCancel = nil
+	if a.diffOpenTask != nil {
+		a.diffOpenTask.Stop()
 	}
 	if a.Status != nil {
 		a.setDiffOpenSegment("")
 	}
 }
 
-func (a *App) startDiffOpen(read func(context.Context) *DiffOpenResult) {
+func (a *App) startDiffOpen(read func(context.Context) *diffOpenResult) {
 	a.cancelPendingDiff()
-	gen := a.diffOpenGen
-	origin := a.EditorGroup.ActiveFilePath()
-	ctx, cancel := context.WithTimeout(context.Background(), diffOpenTimeout)
-	a.diffOpenCancel = cancel
-	if a.Screen == nil {
-		result := read(ctx)
-		cancel()
-		result.Gen = gen
-		result.Origin = origin
-		a.ApplyDiffOpen(result)
-		return
+	if a.diffOpenTask == nil {
+		a.diffOpenTask = NewTask[*diffOpenResult](a, asynctask.TaskOptions{})
 	}
+	origin := a.EditorGroup.ActiveFilePath()
 	a.setDiffOpenSegment("Opening diff…")
-	screen := a.Screen
-	go func() {
-		result := read(ctx)
-		cancel()
-		result.Gen = gen
-		result.Origin = origin
-		screen.PostEvent(tcell.NewEventInterrupt(result))
-	}()
+	a.diffOpenTask.Schedule(func(ctx context.Context) (*diffOpenResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, diffOpenTimeout)
+		defer cancel()
+		return read(ctx), nil
+	}, func(result *diffOpenResult, err error) {
+		a.setDiffOpenSegment("")
+		if err != nil {
+			a.StatusWarn("Could not open diff: " + err.Error())
+			return
+		}
+		a.applyDiffOpen(origin, result)
+	})
 }
 
 func (a *App) setDiffOpenSegment(text string) {
 	a.Status.SetSegment(view.StatusSegment{ID: "diffopen", Side: "left", Priority: 160, Text: text})
 }
 
-func (a *App) ApplyDiffOpen(result *DiffOpenResult) {
-	if result == nil || result.Gen != a.diffOpenGen {
+func (a *App) applyDiffOpen(origin string, result *diffOpenResult) {
+	if result == nil {
 		return
 	}
-	a.diffOpenCancel = nil
-	a.setDiffOpenSegment("")
-	if result.Canceled || a.EditorGroup.ActiveFilePath() != result.Origin {
+	if result.Canceled || a.EditorGroup.ActiveFilePath() != origin {
 		return
 	}
 	if result.Warn != "" {
