@@ -1,29 +1,24 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/eugenioenko/ttt/internal/asynctask"
 	"github.com/eugenioenko/ttt/internal/plugin"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/ui"
 	"github.com/eugenioenko/ttt/internal/widgets"
-
-	"github.com/gdamore/tcell/v3"
 )
-
-type pluginReadmeResult struct {
-	name    string
-	content string
-	err     error
-}
 
 type pluginDetailState struct {
 	markdown   *widgets.MarkdownWidget
 	installBtn *widgets.ButtonWidget
+	readme     *asynctask.Task[string]
 }
 
 func (a *App) OpenPluginDetail(entry plugin.RemoteRegistryEntry) {
@@ -52,11 +47,6 @@ func (a *App) OpenPluginDetail(entry plugin.RemoteRegistryEntry) {
 	if installed {
 		installBtn.SetLabel("Installed")
 		installBtn.Disabled = true
-	}
-
-	a.pluginDetailWidgets[entry.Name] = &pluginDetailState{
-		markdown:   md,
-		installBtn: installBtn,
 	}
 
 	nameLabel := widgets.NewLabelWidget(widgets.LabelConfig{
@@ -141,28 +131,22 @@ func (a *App) OpenPluginDetail(entry plugin.RemoteRegistryEntry) {
 	content := widgets.NewVStackWidget(header, divider, scroll)
 	adapter := ui.NewWidgetAdapter(content)
 
+	a.cleanupPluginDetailTab(tabID)
 	a.EditorGroup.OpenPluginTab(tabID, entry.Title(), adapter)
-
-	go func() {
-		readme, err := fetchPluginReadme(entry.Repo, entry.Path)
-		a.Screen.PostEvent(tcell.NewEventInterrupt(&pluginReadmeResult{
-			name:    entry.Name,
-			content: readme,
-			err:     err,
-		}))
-	}()
-}
-
-func (a *App) handlePluginReadmeResult(result *pluginReadmeResult) {
-	state, ok := a.pluginDetailWidgets[result.name]
-	if !ok {
-		return
+	state := &pluginDetailState{
+		markdown: md, installBtn: installBtn,
+		readme: NewTask[string](a, asynctask.TaskOptions{}),
 	}
-	if result.err != nil {
-		state.markdown.SetContent(fmt.Sprintf("Could not load README: %s", result.err))
-	} else {
-		state.markdown.SetContent(result.content)
-	}
+	a.pluginDetailWidgets[entry.Name] = state
+	state.readme.Schedule(func(ctx context.Context) (string, error) {
+		return fetchPluginReadme(ctx, entry.Repo, entry.Path)
+	}, func(content string, err error) {
+		if err != nil {
+			md.SetContent(fmt.Sprintf("Could not load README: %s", err))
+		} else {
+			md.SetContent(content)
+		}
+	})
 }
 
 func (a *App) updatePluginDetailButtons() {
@@ -177,6 +161,9 @@ func (a *App) updatePluginDetailButtons() {
 func (a *App) cleanupPluginDetailTab(id string) {
 	const prefix = "plugin-detail:"
 	if name, ok := strings.CutPrefix(id, prefix); ok {
+		if state := a.pluginDetailWidgets[name]; state != nil {
+			a.releaseTask(state.readme)
+		}
 		delete(a.pluginDetailWidgets, name)
 	}
 }
@@ -190,14 +177,18 @@ func (a *App) isPluginInstalled(name string) bool {
 	return false
 }
 
-func fetchPluginReadme(repoURL, repoPath string) (string, error) {
+func fetchPluginReadme(ctx context.Context, repoURL, repoPath string) (string, error) {
 	rawURL := repoToRawReadme(repoURL, repoPath)
 	if rawURL == "" {
 		return "", fmt.Errorf("unsupported repository URL")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(rawURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetch readme: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch readme: %w", err)
 	}
