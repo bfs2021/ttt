@@ -1065,6 +1065,40 @@ func TestDetailsCodeSpanStopsAtBlockBoundaries(t *testing.T) {
 	}
 }
 
+func TestDetailsOrderedMarkerBelowOneKeepsParagraph(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse `\n2. item\n</details>\n`\nHidden.\n</details>\nOutside."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	collapsed := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(collapsed, "Outside.") || strings.Contains(collapsed, "Hidden.") {
+		t.Fatalf("expected hidden text inside and outside text visible, got %q", collapsed)
+	}
+	body := strings.Join(textLines(doc.Details()[0].Content.Render()), "\n")
+	if !strings.Contains(body, "Hidden.") || strings.Contains(body, "Outside.") {
+		t.Fatalf("expected a marker that does not start at one to continue the span, got %q", body)
+	}
+}
+
+func TestDetailsSameLineBodyJoinsMultilineCodeSpan(t *testing.T) {
+	input := "<details><summary>More</summary>Use `\n</details>\n`\nThis should stay hidden.\n</details>"
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	tl := textLines(doc.Render())
+	if len(tl) != 1 || tl[0] != "▶ More" {
+		t.Fatalf("expected only '▶ More' when collapsed, got %v", tl)
+	}
+	body := strings.Join(textLines(doc.Details()[0].Content.Render()), "\n")
+	if !strings.Contains(body, "This should stay hidden.") {
+		t.Fatalf("expected same-line body text to stay inside, got %q", body)
+	}
+}
+
 func TestDetailsMultilineCodeSpanStaysInsideParagraph(t *testing.T) {
 	input := "<details>\n<summary>More</summary>\nUse `\ncontinuation\n</details>\n`\nHidden.\n</details>\nOutside."
 

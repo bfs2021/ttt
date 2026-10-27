@@ -271,6 +271,7 @@ func parseDocumentMasked(lines, masked []string, nextID *int) *Document {
 
 			trimmedAfterSummary := strings.TrimSpace(afterDetails)
 			singleLineClosed := false
+			sameLineBody := ""
 			if trimmedAfterSummary != "" {
 				if closeLoc := findDetailsClose(trimmedAfterSummary); closeLoc != nil {
 					inside := trimmedAfterSummary[:closeLoc[0]]
@@ -279,7 +280,7 @@ func parseDocumentMasked(lines, masked []string, nextID *int) *Document {
 					}
 					singleLineClosed = true
 				} else {
-					innerLines = append(innerLines, trimmedAfterSummary)
+					sameLineBody = trimmedAfterSummary
 				}
 			}
 
@@ -287,17 +288,28 @@ func parseDocumentMasked(lines, masked []string, nextID *int) *Document {
 				depth := 1
 				innerFence := ""
 				// Masking starts at the body boundary so backticks in the
-				// summary cannot pair with text outside the disclosure.
+				// summary cannot pair with text outside the disclosure. Body
+				// text on the summary line is the first body line, so it joins
+				// the mask and keeps innerMasked aligned with innerLines.
 				bodyStart := i + 1
-				maskedBody := maskCodeSpans(lines[bodyStart:])
+				bodyLines := lines[bodyStart:]
+				offset := 0
+				if sameLineBody != "" {
+					bodyLines = append([]string{sameLineBody}, bodyLines...)
+					offset = 1
+				}
+				maskedBody := maskCodeSpans(bodyLines)
 				appendInner := func(raw, maskedLine string) {
 					innerLines = append(innerLines, raw)
 					innerMasked = append(innerMasked, maskedLine)
 				}
+				if offset == 1 {
+					appendInner(sameLineBody, maskedBody[0])
+				}
 				i = bodyStart
 				for i < len(lines) {
 					curr := lines[i]
-					currMasked := maskedBody[i-bodyStart]
+					currMasked := maskedBody[i-bodyStart+offset]
 					currTrimmedLeft := strings.TrimLeft(curr, " ")
 					currIndent := len(curr) - len(currTrimmedLeft)
 					currTagText := strings.TrimLeft(currMasked, " ")
@@ -574,8 +586,10 @@ func isListItemStart(s string) bool {
 	if s[0] == '-' || s[0] == '+' || s[0] == '*' {
 		return len(s) == 1 || s[1] == ' ' || s[1] == '\t'
 	}
+	value := 0
 	digits := 0
 	for digits < len(s) && digits < 9 && s[digits] >= '0' && s[digits] <= '9' {
+		value = value*10 + int(s[digits]-'0')
 		digits++
 	}
 	if digits == 0 || digits >= len(s) {
@@ -584,7 +598,11 @@ func isListItemStart(s string) bool {
 	if s[digits] != '.' && s[digits] != ')' {
 		return false
 	}
-	return digits+1 == len(s) || s[digits+1] == ' ' || s[digits+1] == '\t'
+	if digits+1 != len(s) && s[digits+1] != ' ' && s[digits+1] != '\t' {
+		return false
+	}
+	// Only an ordered list starting at one interrupts a paragraph.
+	return value == 1
 }
 
 // maskParagraphCodeSpans masks the code spans of one paragraph. A span opens on
