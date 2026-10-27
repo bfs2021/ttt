@@ -274,11 +274,13 @@ func parseDocument(lines []string, nextID *int) *Document {
 			if !singleLineClosed {
 				depth := 1
 				innerFence := ""
+				maskedLines := maskCodeSpans(lines)
 				i++
 				for i < len(lines) {
 					curr := lines[i]
 					currTrimmedLeft := strings.TrimLeft(curr, " ")
 					currIndent := len(curr) - len(currTrimmedLeft)
+					currTagText := strings.TrimLeft(maskedLines[i], " ")
 
 					if innerFence != "" {
 						if currIndent <= 3 && matchFenceEnd(currTrimmedLeft, innerFence) {
@@ -299,8 +301,8 @@ func parseDocument(lines []string, nextID *int) *Document {
 					}
 
 					if currIndent <= 3 {
-						hasStart := detailsStartRegex.MatchString(currTrimmedLeft)
-						hasClose := findDetailsClose(currTrimmedLeft) != nil
+						hasStart := detailsStartRegex.MatchString(currTagText)
+						hasClose := detailsCloseRegex.MatchString(currTagText)
 						if hasStart && hasClose {
 							innerLines = append(innerLines, curr)
 							i++
@@ -408,6 +410,137 @@ func maskInlineCode(s string) string {
 		return s
 	}
 	return string(masked)
+}
+
+// maskCodeSpans blanks out inline code spans, including spans that continue
+// across lines within one paragraph, keeping byte offsets and line breaks
+// intact. An opener with no matching run is left as literal text, and fenced
+// code blocks are skipped, so callers can match HTML tags on the masked copy.
+func maskCodeSpans(lines []string) []string {
+	masked := make([]string, len(lines))
+	copy(masked, lines)
+
+	inFence := ""
+	for i := 0; i < len(lines); {
+		line := lines[i]
+		trimmed := strings.TrimLeft(line, " ")
+		indent := len(line) - len(trimmed)
+
+		if inFence != "" {
+			if indent <= 3 && matchFenceEnd(trimmed, inFence) {
+				inFence = ""
+			}
+			i++
+			continue
+		}
+		if indent <= 3 {
+			if fence, ok := matchFenceStart(trimmed); ok {
+				inFence = fence
+				i++
+				continue
+			}
+		}
+		if strings.TrimSpace(line) == "" {
+			i++
+			continue
+		}
+
+		end := i + 1
+		for end < len(lines) && strings.TrimSpace(lines[end]) != "" {
+			next := strings.TrimLeft(lines[end], " ")
+			if len(lines[end])-len(next) <= 3 {
+				if _, ok := matchFenceStart(next); ok {
+					break
+				}
+			}
+			end++
+		}
+		maskParagraphCodeSpans(lines[i:end], masked[i:end])
+		i = end
+	}
+	return masked
+}
+
+// maskParagraphCodeSpans masks the code spans of one paragraph. A span opens on
+// a run of n backticks and closes on the next run of exactly n backticks in the
+// same paragraph; an unmatched opener stays literal.
+func maskParagraphCodeSpans(lines []string, masked []string) {
+	bufs := make([][]byte, len(lines))
+	for i, line := range lines {
+		bufs[i] = []byte(line)
+	}
+
+	line, col := 0, 0
+	for line < len(lines) {
+		if col >= len(lines[line]) {
+			line++
+			col = 0
+			continue
+		}
+		if lines[line][col] != '`' {
+			col++
+			continue
+		}
+
+		backslashes := 0
+		for b := col - 1; b >= 0 && lines[line][b] == '\\'; b-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			col++
+			continue
+		}
+
+		open := col
+		for col < len(lines[line]) && lines[line][col] == '`' {
+			col++
+		}
+		run := col - open
+
+		closeLine, closeCol, ok := findCodeSpanClose(lines, line, col, run)
+		if !ok {
+			continue
+		}
+		for l := line; l <= closeLine; l++ {
+			from, to := 0, len(bufs[l])
+			if l == line {
+				from = open
+			}
+			if l == closeLine {
+				to = closeCol + run
+			}
+			for m := from; m < to; m++ {
+				bufs[l][m] = ' '
+			}
+		}
+		line, col = closeLine, closeCol+run
+	}
+
+	for i := range bufs {
+		masked[i] = string(bufs[i])
+	}
+}
+
+// findCodeSpanClose returns the start of the next backtick run of exactly n
+// backticks, searching from col on line through the end of the paragraph.
+func findCodeSpanClose(lines []string, line, col, n int) (int, int, bool) {
+	for ; line < len(lines); line++ {
+		for col < len(lines[line]) {
+			if lines[line][col] != '`' {
+				col++
+				continue
+			}
+			start := col
+			for col < len(lines[line]) && lines[line][col] == '`' {
+				col++
+			}
+			if col-start == n {
+				return line, start, true
+			}
+		}
+		col = 0
+	}
+	return 0, 0, false
 }
 
 func extractSummaryFromLine(line string) (summary string, spans []Span, remaining string) {

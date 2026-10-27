@@ -968,6 +968,58 @@ func TestDetailsIgnoresClosingTagInInlineCode(t *testing.T) {
 	}
 }
 
+func TestDetailsIgnoresClosingTagInMultilineCodeSpan(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse `\n</details>\n`\nThis should stay hidden.\n</details>"
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	tl := textLines(doc.Render())
+	if len(tl) != 1 || tl[0] != "▶ More" {
+		t.Fatalf("expected only '▶ More' when collapsed, got %v", tl)
+	}
+
+	doc.Toggle(doc.Details()[0].ID)
+	expanded := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(expanded, "</details>") || !strings.Contains(expanded, "This should stay hidden.") {
+		t.Fatalf("expected the code span's text inside the disclosure, got %q", expanded)
+	}
+}
+
+func TestDetailsMultilineCodeSpanNeedsMatchingRun(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse ``\n`\n</details>\n``\nHidden.\n</details>"
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	tl := textLines(doc.Render())
+	if len(tl) != 1 || tl[0] != "▶ More" {
+		t.Fatalf("expected only '▶ More' when collapsed, got %v", tl)
+	}
+
+	doc.Toggle(doc.Details()[0].ID)
+	expanded := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(expanded, "</details>") || !strings.Contains(expanded, "Hidden.") {
+		t.Fatalf("expected the matching run to keep the body together, got %q", expanded)
+	}
+}
+
+func TestDetailsUnmatchedBacktickKeepsClosingTag(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse `\n</details>\n\nOutside."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	tl := textLines(doc.Render())
+	want := []string{"▶ More", "", "Outside."}
+	if !slices.Equal(tl, want) {
+		t.Fatalf("expected %v when collapsed, got %v", want, tl)
+	}
+}
+
 func TestDetailsClosesAfterEscapedBacktick(t *testing.T) {
 	input := "<details>\n<summary>More information</summary>\n\nInside.\n\\` </details> `\n\nOutside."
 
