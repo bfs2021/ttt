@@ -584,7 +584,13 @@ func isListItemStart(s string) bool {
 		return false
 	}
 	if s[0] == '-' || s[0] == '+' || s[0] == '*' {
-		return len(s) == 1 || s[1] == ' ' || s[1] == '\t'
+		if len(s) == 1 || s[1] == ' ' || s[1] == '\t' {
+			// An empty list item (a bare marker, optionally followed by
+			// spaces) does not interrupt a paragraph (CommonMark 0.31.2
+			// example 285).
+			return strings.TrimSpace(s[1:]) != ""
+		}
+		return false
 	}
 	value := 0
 	digits := 0
@@ -601,8 +607,9 @@ func isListItemStart(s string) bool {
 	if digits+1 != len(s) && s[digits+1] != ' ' && s[digits+1] != '\t' {
 		return false
 	}
-	// Only an ordered list starting at one interrupts a paragraph.
-	return value == 1
+	// Only a non-empty ordered list item starting at one interrupts a
+	// paragraph; a bare "1." or "1)" line stays inside the paragraph.
+	return value == 1 && strings.TrimSpace(s[digits+1:]) != ""
 }
 
 // maskParagraphCodeSpans masks the code spans of one paragraph. A span opens on
@@ -622,6 +629,12 @@ func maskParagraphCodeSpans(lines []string, masked []string) {
 			continue
 		}
 		if lines[line][col] != '`' {
+			if lines[line][col] == '<' {
+				if end := htmlTagEnd(lines[line], col); end >= 0 {
+					col = end
+					continue
+				}
+			}
 			col++
 			continue
 		}
@@ -667,10 +680,18 @@ func maskParagraphCodeSpans(lines []string, masked []string) {
 
 // findCodeSpanClose returns the start of the next backtick run of exactly n
 // backticks, searching from col on line through the end of the paragraph.
+// Backticks inside an HTML tag are literal, not delimiters, so the search
+// skips over tags as it scans.
 func findCodeSpanClose(lines []string, line, col, n int) (int, int, bool) {
 	for ; line < len(lines); line++ {
 		for col < len(lines[line]) {
 			if lines[line][col] != '`' {
+				if lines[line][col] == '<' {
+					if end := htmlTagEnd(lines[line], col); end >= 0 {
+						col = end
+						continue
+					}
+				}
 				col++
 				continue
 			}
@@ -685,6 +706,49 @@ func findCodeSpanClose(lines []string, line, col, n int) (int, int, bool) {
 		col = 0
 	}
 	return 0, 0, false
+}
+
+// htmlTagEnd reports where the HTML tag starting at line[start] ends. It
+// returns the index just past the tag's '>', or len(line) when the tag is
+// still open at the end of the line, and -1 when line[start] does not begin
+// a tag at all. Raw HTML is consumed before code-span delimiters are
+// matched, so a backtick inside a tag (for example in a quoted attribute)
+// is literal text and never opens or closes a code span.
+func htmlTagEnd(line string, start int) int {
+	if start+1 >= len(line) {
+		return -1
+	}
+	c := line[start+1]
+	if isTagNameStart(c) {
+		// Open tag.
+	} else if c == '/' && start+2 < len(line) && isTagNameStart(line[start+2]) {
+		// Closing tag.
+	} else {
+		return -1
+	}
+	for i := start + 1; i < len(line); i++ {
+		switch line[i] {
+		case '"':
+			if j := strings.IndexByte(line[i+1:], '"'); j >= 0 {
+				i += j + 1
+			} else {
+				return len(line)
+			}
+		case '\'':
+			if j := strings.IndexByte(line[i+1:], '\''); j >= 0 {
+				i += j + 1
+			} else {
+				return len(line)
+			}
+		case '>':
+			return i + 1
+		}
+	}
+	return len(line)
+}
+
+func isTagNameStart(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func extractSummaryFromLine(line string) (summary string, spans []Span, remaining string) {

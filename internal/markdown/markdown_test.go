@@ -1116,6 +1116,19 @@ func TestDetailsMultilineCodeSpanStaysInsideParagraph(t *testing.T) {
 	}
 }
 
+func TestDetailsBacktickInHTMLAttributeIsNotADelimiter(t *testing.T) {
+	input := "<details title=\"`\">\nNo summary tag provided\n</details> and a `span` after.\n\nOutside."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	collapsed := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(collapsed, "Outside.") {
+		t.Fatalf("expected the block to close before Outside., got %q", collapsed)
+	}
+}
+
 func TestDetailsUnmatchedBacktickKeepsClosingTag(t *testing.T) {
 	input := "<details>\n<summary>More</summary>\nUse `\n</details>\n\nOutside."
 
