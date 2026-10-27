@@ -1006,6 +1006,35 @@ func TestDetailsMultilineCodeSpanNeedsMatchingRun(t *testing.T) {
 	}
 }
 
+func TestDetailsSummaryBacktickDoesNotSwallowClosingTag(t *testing.T) {
+	input := "<details><summary>Use `</summary>\n</details>\n`\nOutside."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	if det := doc.Details()[0]; det.Content != nil && len(det.Content.Blocks) != 0 {
+		t.Fatalf("expected an empty body, got %v", textLines(det.Content.Render()))
+	}
+	if rendered := strings.Join(textLines(doc.Render()), "\n"); !strings.Contains(rendered, "Outside.") {
+		t.Fatalf("expected the closing tag to end the body, got %q", rendered)
+	}
+}
+
+func TestDetailsChildParseIgnoresTagsInMultilineCodeSpan(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nBefore `code\n<details>\nstill code`\nAfter.\n</details>"
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected only the outer detail block, got %d", len(doc.Details()))
+	}
+	doc.Toggle(doc.Details()[0].ID)
+	expanded := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(expanded, "<details>") || !strings.Contains(expanded, "still code") {
+		t.Fatalf("expected the code span to keep its literal tag, got %q", expanded)
+	}
+}
+
 func TestDetailsUnmatchedBacktickKeepsClosingTag(t *testing.T) {
 	input := "<details>\n<summary>More</summary>\nUse `\n</details>\n\nOutside."
 

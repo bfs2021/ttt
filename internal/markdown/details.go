@@ -170,6 +170,16 @@ func Parse(text string) *Document {
 }
 
 func parseDocument(lines []string, nextID *int) *Document {
+	return parseDocumentMasked(lines, nil, nextID)
+}
+
+// parseDocumentMasked parses lines, treating HTML tags inside inline code spans
+// as literal text. masked must keep the offsets of lines; when it is missing or
+// misaligned the mask is rebuilt from lines.
+func parseDocumentMasked(lines, masked []string, nextID *int) *Document {
+	if masked == nil || len(masked) != len(lines) {
+		masked = maskCodeSpans(lines)
+	}
 	var blocks []Block
 	var allDetails []*DetailBlock
 	var contentLines []string
@@ -213,7 +223,8 @@ func parseDocument(lines []string, nextID *int) *Document {
 			}
 		}
 
-		if indent <= 3 && detailsStartRegex.MatchString(trimmedLeft) {
+		trimmedMasked := strings.TrimLeft(masked[i], " ")
+		if indent <= 3 && len(trimmedMasked) == len(trimmedLeft) && detailsStartRegex.MatchString(trimmedMasked) {
 			flushContent()
 
 			loc := detailsStartRegex.FindStringIndex(trimmedLeft)
@@ -224,6 +235,7 @@ func parseDocument(lines []string, nextID *int) *Document {
 			var summaryText string
 			var summarySpans []Span
 			var innerLines []string
+			var innerMasked []string
 
 			trimmedAfter := strings.TrimSpace(afterDetails)
 			if summaryStartRegex.MatchString(trimmedAfter) {
@@ -274,19 +286,27 @@ func parseDocument(lines []string, nextID *int) *Document {
 			if !singleLineClosed {
 				depth := 1
 				innerFence := ""
-				maskedLines := maskCodeSpans(lines)
-				i++
+				// Masking starts at the body boundary so backticks in the
+				// summary cannot pair with text outside the disclosure.
+				bodyStart := i + 1
+				maskedBody := maskCodeSpans(lines[bodyStart:])
+				appendInner := func(raw, maskedLine string) {
+					innerLines = append(innerLines, raw)
+					innerMasked = append(innerMasked, maskedLine)
+				}
+				i = bodyStart
 				for i < len(lines) {
 					curr := lines[i]
+					currMasked := maskedBody[i-bodyStart]
 					currTrimmedLeft := strings.TrimLeft(curr, " ")
 					currIndent := len(curr) - len(currTrimmedLeft)
-					currTagText := strings.TrimLeft(maskedLines[i], " ")
+					currTagText := strings.TrimLeft(currMasked, " ")
 
 					if innerFence != "" {
 						if currIndent <= 3 && matchFenceEnd(currTrimmedLeft, innerFence) {
 							innerFence = ""
 						}
-						innerLines = append(innerLines, curr)
+						appendInner(curr, currMasked)
 						i++
 						continue
 					}
@@ -294,7 +314,7 @@ func parseDocument(lines []string, nextID *int) *Document {
 					if currIndent <= 3 {
 						if fence, ok := matchFenceStart(currTrimmedLeft); ok {
 							innerFence = fence
-							innerLines = append(innerLines, curr)
+							appendInner(curr, currMasked)
 							i++
 							continue
 						}
@@ -304,13 +324,13 @@ func parseDocument(lines []string, nextID *int) *Document {
 						hasStart := detailsStartRegex.MatchString(currTagText)
 						hasClose := detailsCloseRegex.MatchString(currTagText)
 						if hasStart && hasClose {
-							innerLines = append(innerLines, curr)
+							appendInner(curr, currMasked)
 							i++
 							continue
 						}
 						if hasStart {
 							depth++
-							innerLines = append(innerLines, curr)
+							appendInner(curr, currMasked)
 							i++
 							continue
 						}
@@ -319,20 +339,20 @@ func parseDocument(lines []string, nextID *int) *Document {
 							if depth == 0 {
 								break
 							}
-							innerLines = append(innerLines, curr)
+							appendInner(curr, currMasked)
 							i++
 							continue
 						}
 					}
 
-					innerLines = append(innerLines, curr)
+					appendInner(curr, currMasked)
 					i++
 				}
 			}
 
 			detID := *nextID
 			(*nextID)++
-			childDoc := parseDocument(innerLines, nextID)
+			childDoc := parseDocumentMasked(innerLines, innerMasked, nextID)
 
 			det := &DetailBlock{
 				ID:           detID,
