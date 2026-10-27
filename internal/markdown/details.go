@@ -434,8 +434,9 @@ func maskInlineCode(s string) string {
 
 // maskCodeSpans blanks out inline code spans, including spans that continue
 // across lines within one paragraph, keeping byte offsets and line breaks
-// intact. An opener with no matching run is left as literal text, and fenced
-// code blocks are skipped, so callers can match HTML tags on the masked copy.
+// intact. An opener with no matching run is left as literal text; fenced and
+// indented code blocks are skipped, and a span never crosses into another
+// block, so callers can match HTML tags on the masked copy.
 func maskCodeSpans(lines []string) []string {
 	masked := make([]string, len(lines))
 	copy(masked, lines)
@@ -464,12 +465,26 @@ func maskCodeSpans(lines []string) []string {
 			i++
 			continue
 		}
+		if indent >= 4 {
+			// Indented code block: inline markup is literal, so no span
+			// starts or continues here.
+			i++
+			continue
+		}
+		if interruptsParagraph(trimmed) {
+			maskParagraphCodeSpans(lines[i:i+1], masked[i:i+1])
+			i++
+			continue
+		}
 
 		end := i + 1
 		for end < len(lines) && strings.TrimSpace(lines[end]) != "" {
 			next := strings.TrimLeft(lines[end], " ")
 			if len(lines[end])-len(next) <= 3 {
 				if _, ok := matchFenceStart(next); ok {
+					break
+				}
+				if interruptsParagraph(next) {
 					break
 				}
 			}
@@ -479,6 +494,97 @@ func maskCodeSpans(lines []string) []string {
 		i = end
 	}
 	return masked
+}
+
+// interruptsParagraph reports whether a line begins a block that ends the
+// paragraph above it. A code span cannot cross such a boundary, so the masker
+// starts a fresh paragraph there instead of pairing backticks across blocks.
+func interruptsParagraph(s string) bool {
+	if s == "" {
+		return false
+	}
+	if s[0] == '>' {
+		return true
+	}
+	if headingLevel(s) > 0 {
+		return true
+	}
+	trimmed := strings.TrimRight(s, " \t")
+	if isThematicBreak(trimmed) || isSetextUnderline(trimmed) {
+		return true
+	}
+	return isListItemStart(s)
+}
+
+func headingLevel(s string) int {
+	n := 0
+	for n < len(s) && s[n] == '#' {
+		n++
+	}
+	if n == 0 || n > 6 {
+		return 0
+	}
+	if n == len(s) || s[n] == ' ' || s[n] == '\t' {
+		return n
+	}
+	return 0
+}
+
+func isThematicBreak(s string) bool {
+	var marker byte
+	count := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '*', '-', '_':
+			if marker == 0 {
+				marker = s[i]
+			}
+			if s[i] != marker {
+				return false
+			}
+			count++
+		case ' ', '\t':
+		default:
+			return false
+		}
+	}
+	return count >= 3
+}
+
+func isSetextUnderline(s string) bool {
+	if s == "" {
+		return false
+	}
+	marker := s[0]
+	if marker != '=' && marker != '-' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] != marker {
+			return false
+		}
+	}
+	return true
+}
+
+func isListItemStart(s string) bool {
+	if s == "" {
+		return false
+	}
+	if s[0] == '-' || s[0] == '+' || s[0] == '*' {
+		return len(s) == 1 || s[1] == ' ' || s[1] == '\t'
+	}
+	digits := 0
+	for digits < len(s) && digits < 9 && s[digits] >= '0' && s[digits] <= '9' {
+		digits++
+	}
+	if digits == 0 || digits >= len(s) {
+		return false
+	}
+	if s[digits] != '.' && s[digits] != ')' {
+		return false
+	}
+	return digits+1 == len(s) || s[digits+1] == ' ' || s[digits+1] == '\t'
 }
 
 // maskParagraphCodeSpans masks the code spans of one paragraph. A span opens on

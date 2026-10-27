@@ -1035,6 +1035,53 @@ func TestDetailsChildParseIgnoresTagsInMultilineCodeSpan(t *testing.T) {
 	}
 }
 
+func TestDetailsCodeSpanStopsAtBlockBoundaries(t *testing.T) {
+	boundaries := []struct{ name, line string }{
+		{"atx heading", "# Heading"},
+		{"setext heading", "---"},
+		{"thematic break", "***"},
+		{"blockquote", "> quoted"},
+		{"bullet list", "- item"},
+		{"ordered list", "1. item"},
+		{"blank line", ""},
+	}
+	for _, tc := range boundaries {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "<details>\n<summary>More</summary>\nUse `\n" + tc.line + "\n</details>\n`Outside."
+
+			doc := Parse(input)
+			if len(doc.Details()) != 1 {
+				t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+			}
+			collapsed := strings.Join(textLines(doc.Render()), "\n")
+			if !strings.Contains(collapsed, "Outside.") {
+				t.Fatalf("expected outside text to stay visible while collapsed, got %q", collapsed)
+			}
+			body := strings.Join(textLines(doc.Details()[0].Content.Render()), "\n")
+			if strings.Contains(body, "Outside.") {
+				t.Fatalf("expected outside text to stay out of the body, got %q", body)
+			}
+		})
+	}
+}
+
+func TestDetailsMultilineCodeSpanStaysInsideParagraph(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse `\ncontinuation\n</details>\n`\nHidden.\n</details>\nOutside."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	collapsed := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(collapsed, "Outside.") || strings.Contains(collapsed, "Hidden.") {
+		t.Fatalf("expected hidden text inside and outside text visible, got %q", collapsed)
+	}
+	body := strings.Join(textLines(doc.Details()[0].Content.Render()), "\n")
+	if !strings.Contains(body, "Hidden.") || strings.Contains(body, "Outside.") {
+		t.Fatalf("expected a multiline span within the paragraph to keep the body together, got %q", body)
+	}
+}
+
 func TestDetailsUnmatchedBacktickKeepsClosingTag(t *testing.T) {
 	input := "<details>\n<summary>More</summary>\nUse `\n</details>\n\nOutside."
 
