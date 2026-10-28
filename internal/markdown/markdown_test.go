@@ -1116,6 +1116,23 @@ func TestDetailsMultilineCodeSpanStaysInsideParagraph(t *testing.T) {
 	}
 }
 
+func TestDetailsCodeFirstSpanClosesInsideTagShapedText(t *testing.T) {
+	input := "<details>\n<summary>More</summary>\nUse `x <span title=\"`\">text</span>\n</details>\nOutside ` trailing."
+
+	doc := Parse(input)
+	if len(doc.Details()) != 1 {
+		t.Fatalf("expected 1 detail block, got %d", len(doc.Details()))
+	}
+	collapsed := strings.Join(textLines(doc.Render()), "\n")
+	if !strings.Contains(collapsed, "Outside") {
+		t.Fatalf("expected the real closing tag to end the body, got %q", collapsed)
+	}
+	body := strings.Join(textLines(doc.Details()[0].Content.Render()), "\n")
+	if !strings.Contains(body, "text") || strings.Contains(body, "Outside") {
+		t.Fatalf("expected tag-shaped code content inside the body only, got %q", body)
+	}
+}
+
 func TestDetailsBacktickInHTMLAttributeIsNotADelimiter(t *testing.T) {
 	input := "<details title=\"`\">\nNo summary tag provided\n</details> and a `span` after.\n\nOutside."
 

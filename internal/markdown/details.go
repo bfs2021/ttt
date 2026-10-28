@@ -680,18 +680,12 @@ func maskParagraphCodeSpans(lines []string, masked []string) {
 
 // findCodeSpanClose returns the start of the next backtick run of exactly n
 // backticks, searching from col on line through the end of the paragraph.
-// Backticks inside an HTML tag are literal, not delimiters, so the search
-// skips over tags as it scans.
+// Once a span is open, tag-shaped text is code content, so the search matches
+// the next backtick run even when it sits inside what looks like an HTML tag.
 func findCodeSpanClose(lines []string, line, col, n int) (int, int, bool) {
 	for ; line < len(lines); line++ {
 		for col < len(lines[line]) {
 			if lines[line][col] != '`' {
-				if lines[line][col] == '<' {
-					if end := htmlTagEnd(lines[line], col); end >= 0 {
-						col = end
-						continue
-					}
-				}
 				col++
 				continue
 			}
